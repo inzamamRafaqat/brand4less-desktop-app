@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Brand 4 Less - User Manual</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+    @page {
+      size: A4;
+      margin: 18mm 15mm 18mm 15mm;
+      @bottom-right {
+        content: "Page " counter(page);
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-size: 8pt;
+        color: #64748b;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      font-size: 9.5pt;
+      line-height: 1.55;
+    }
+
+    .page-break {
+      page-break-before: always;
+      break-before: page;
+    }
+
+    .no-break {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    /* ── COVER PAGE ── */
+    .cover-page {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: linear-gradient(145deg, #090d16 0%, #0f172a 100%);
+      color: #ffffff;
+      padding: 50px 40px;
+      margin: -18mm -15mm;
+      box-sizing: border-box;
+      position: relative;
+    }
+
+    .cover-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      border-radius: 999px;
+      font-size: 9pt;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      width: fit-content;
+    }
+
+    .cover-center {
+      text-align: center;
+      margin: auto 0;
+    }
+
+    .cover-logo-box {
+      width: 80px;
+      height: 80px;
+      background: #ffffff;
+      color: #0f172a;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26pt;
+      font-weight: 900;
+      margin: 0 auto 24px auto;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+
+    .cover-title {
+      font-size: 32pt;
+      font-weight: 900;
+      letter-spacing: -1px;
+      margin: 0 0 10px 0;
+      color: #ffffff;
+    }
+
+    .cover-subtitle {
+      font-size: 14pt;
+      font-weight: 700;
+      color: #34d399;
+      margin: 0 0 12px 0;
+      letter-spacing: 0.5px;
+    }
+
+    .cover-desc {
+      font-size: 10pt;
+      color: #94a3b8;
+      max-width: 480px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    .cover-footer-box {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .cover-footer-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .cover-footer-label {
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    .cover-footer-val {
+      font-size: 9pt;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    /* ── SECTION HEADERS ── */
+    .section-header {
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 8px;
+      margin-top: 0;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .section-title {
+      font-size: 16pt;
+      font-weight: 900;
+      color: #0f172a;
+      letter-spacing: -0.5px;
+      margin: 0;
+    }
+
+    .section-tag {
+      font-size: 8pt;
+      font-weight: 700;
+      color: #059669;
+      background: #ecfdf5;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid #a7f3d0;
+    }
+
+    h2, h3 {
+      color: #0f172a;
+      font-weight: 800;
+      margin-top: 18px;
+      margin-bottom: 8px;
+    }
+
+    h2 { font-size: 12pt; }
+    h3 { font-size: 10.5pt; }
+
+    p {
+      margin: 0 0 10px 0;
+      color: #334155;
+    }
+
+    /* ── CARD BOXES ── */
+    .info-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+
+    .info-card-title {
+      font-size: 10pt;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .info-card-desc {
+      font-size: 8.5pt;
+      color: #475569;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    /* ── HARDWARE BOXES ── */
+    .hardware-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .hardware-card {
+      background: #ffffff;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .hardware-badge {
+      display: inline-block;
+      font-size: 7pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+
+    .hardware-card-title {
+      font-size: 10.5pt;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 6px 0;
+    }
+
+    .hardware-step {
+      font-size: 8.5pt;
+      color: #334155;
+      margin-bottom: 4px;
+      display: flex;
+      gap: 6px;
+    }
+
+    .step-num {
+      font-weight: 800;
+      color: #059669;
+      min-width: 14px;
+    }
+
+    /* ── TABLES ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+      font-size: 8.5pt;
+    }
+
+    th {
+      background: #0f172a;
+      color: #ffffff;
+      font-weight: 700;
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 8pt;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+    }
+
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+
+    .pin-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: #059669;
+      background: #ecfdf5;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #a7f3d0;
+      display: inline-block;
+    }
+
+    .key-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 800;
+      color: #0f172a;
+      background: #e2e8f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #cbd5e1;
+      display: inline-block;
+    }
+
+    /* ── LISTS ── */
+    .bullet-list {
+      margin: 0 0 12px 0;
+      padding-left: 16px;
+    }
+
+    .bullet-list li {
+      margin-bottom: 5px;
+      font-size: 9pt;
+      color: #334155;
+    }
+
+    .bullet-list strong {
+      color: #0f172a;
+    }
+
+    .footer-note {
+      font-size: 7.5pt;
+      color: #94a3b8;
+      text-align: center;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <!-- COVER PAGE -->
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <div class="cover-page">
+    <div>
+      <div class="cover-badge">Enterprise Retail System</div>
+    </div>
+
+    <div class="cover-center">
+      <div class="cover-logo-box">B4L</div>
+      <h1 class="cover-title">BRAND 4 LESS</h1>
+      <div class="cover-subtitle">DESKTOP RETAIL SUITE — USER MANUAL</div>
+      <p class="cover-desc">
+        Comprehensive guide for Cashiers, Store Managers, and Owners. Includes POS Billing, Hardware Configuration, Inventory Management, Customer Khata, and Financial Reporting.
+      </p>
+    </div>
+
+    <div class="cover-footer-box">
+      <div class="cover-footer-item">
+        <span class="cover-footer-label">Hardware Pre-Configured</span>
+        <span class="cover-footer-val">TSC Label • DTS Thermal • SpeedX Scanner</span>
+      </div>
+      <div class="cover-footer-item">
+        <span class="cover-footer-label">Architecture</span>
+        <span class="cover-footer-val">100% Offline-First (No Internet Needed)</span>
+      </div>
+      <div class="cover-footer-item">
+        <span class="cover-footer-label">Release</span>
+        <span class="cover-footer-val">Production Edition v1.0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <!-- PAGE 2: GETTING STARTED & ROLES -->
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <div class="page-break"></div>
+
+  <div class="section-header">
+    <h1 class="section-title">1. Getting Started & User Logins</h1>
+    <span class="section-tag">System Access</span>
+  </div>
+
+  <div class="info-card">
+    <div class="info-card-title">How to Launch the Application</div>
+    <p class="info-card-desc">
+      Turn on your store computer and double-click the <strong>"Brand 4 Less"</strong> shortcut icon on your Windows Desktop. The application starts instantly and operates completely offline without requiring an active internet connection.
+    </p>
+  </div>
+
+  <h2>Staff Access Roles & Quick Numpad PINs</h2>
+  <p>During busy store hours, cashiers and staff can log in within one second by entering their 4-digit PIN on the on-screen numeric keypad:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Role</th>
+        <th style="width: 22%;">Default Login</th>
+        <th style="width: 15%;">Quick PIN</th>
+        <th style="width: 38%;">Permissions & Scope</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Admin (Owner)</strong></td>
+        <td><code>admin</code></td>
+        <td><span class="pin-code">9999</span></td>
+        <td>Full control: P&L analytics, staff salaries, backups, system settings</td>
+      </tr>
+      <tr>
+        <td><strong>Store Manager</strong></td>
+        <td><code>manager</code></td>
+        <td><span class="pin-code">5555</span></td>
+        <td>Inbound purchases, stock adjustments, customer credit approval</td>
+      </tr>
+      <tr>
+        <td><strong>Sales Cashier</strong></td>
+        <td><code>cashier1</code></td>
+        <td><span class="pin-code">1234</span></td>
+        <td>POS billing terminal, barcode scanning, thermal receipt printing</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Application Modules Overview</h2>
+  <ul class="bullet-list">
+    <li><strong>Executive Dashboard:</strong> Real-time overview of daily sales, profit margins, receivables, and category performance.</li>
+    <li><strong>POS Billing Terminal:</strong> High-speed keyboard-driven cashier counter with SpeedX scanner auto-detection.</li>
+    <li><strong>Customer Records:</strong> Directory of customers, lifetime spend totals, completed orders, and past receipt reprints.</li>
+    <li><strong>Product Inventory:</strong> Variant catalog (Size, Color, Cost, Price, Stock) with TSC vector barcode label generation.</li>
+    <li><strong>Purchases & Invoices:</strong> Receiving vendor shipments with automatic Moving Weighted Average Cost (WAC) calculations.</li>
+    <li><strong>Customer Khata Ledger:</strong> Double-entry customer credit accounts, payment vouchers, and statement exports.</li>
+    <li><strong>Expenses & Payroll:</strong> Daily petty cash tracking, monthly store overhead bills, and staff salary register.</li>
+    <li><strong>Financial Analytics:</strong> Official Profit & Loss (P&L) statements and inventory stock valuation at cost.</li>
+    <li><strong>Settings & Hardware:</strong> Hardware printer tests (TSC/DTS), scanner diagnostics, and instant database backups.</li>
+  </ul>
+
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <!-- PAGE 3: HARDWARE CONFIGURATION -->
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <div class="page-break"></div>
+
+  <div class="section-header">
+    <h1 class="section-title">2. Hardware Setup & Integration Guide</h1>
+    <span class="section-tag">Direct Hardware Drivers</span>
+  </div>
+
+  <p>
+    Brand 4 Less includes native drivers for your store's physical equipment. No third-party software or bridge utilities are needed.
+  </p>
+
+  <div class="hardware-grid">
+    <!-- TSC Label Printer -->
+    <div class="hardware-card">
+      <span class="hardware-badge">Label Printer</span>
+      <h3 class="hardware-card-title">TSC Brand Label Printer</h3>
+      <p style="font-size: 8pt; color: #64748b; margin-bottom: 8px;">Models: TE200, TTP-244 Pro, DA210, TC200 (TSPL Engine)</p>
+      
+      <div class="hardware-step">
+        <span class="step-num">1.</span>
+        <span>Connect USB cable to Windows PC. Insert roll of <strong>50mm x 30mm</strong> sticky clothing labels.</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">2.</span>
+        <span><strong>Calibration:</strong> Turn printer OFF. Hold FEED button and turn ON. Release when it feeds 2 labels. Solid green light = calibrated.</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">3.</span>
+        <span><strong>Print Labels:</strong> Go to Product Inventory ➔ Print Barcode Labels ➔ Click <strong>[Direct Print (TSC)]</strong>.</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">4.</span>
+        <span><strong>Self-Test:</strong> In Settings ➔ Hardware ➔ Click <strong>[Test TSC Label Printer]</strong> to print a test sticker.</span>
+      </div>
+    </div>
+
+    <!-- DTS Receipt Printer -->
+    <div class="hardware-card">
+      <span class="hardware-badge">Receipt Printer</span>
+      <h3 class="hardware-card-title">DTS POS Thermal Printer</h3>
+      <p style="font-size: 8pt; color: #64748b; margin-bottom: 8px;">Models: DTS POS-80, DTS POS-58, ESC/POS Standard</p>
+      
+      <div class="hardware-step">
+        <span class="step-num">1.</span>
+        <span>Connect USB to PC. Insert <strong>80mm thermal paper roll</strong> (paper feeding from bottom).</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">2.</span>
+        <span>Connect the RJ11 cable from your <strong>Cash Drawer</strong> into the printer port marked <strong>DK</strong>.</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">3.</span>
+        <span><strong>Checkout Print:</strong> In POS, click <strong>[Direct Print (DTS Thermal)]</strong>. Prints in &lt;1 second, cuts paper, and opens drawer.</span>
+      </div>
+      <div class="hardware-step">
+        <span class="step-num">4.</span>
+        <span><strong>Self-Test:</strong> In Settings ➔ Hardware ➔ Click <strong>[Test DTS Receipt Printer]</strong> to test print and cash drawer pop.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hardware-card" style="margin-bottom: 16px;">
+    <span class="hardware-badge">Barcode Scanner</span>
+    <h3 class="hardware-card-title">SpeedX Barcode Scanner (USB HID Keyboard Wedge)</h3>
+    <p style="font-size: 8.5pt; color: #334155; margin-bottom: 8px;">
+      Plug the SpeedX USB cable into any free USB port on your computer. Windows activates it immediately.
+    </p>
+    <ul class="bullet-list">
+      <li><strong>Zero-Click Global Detection:</strong> You do <em>not</em> need to click on any search bar. Point the scanner at any tag from anywhere on the POS screen and pull the trigger.</li>
+      <li><strong>Instant Reaction:</strong> Within 20 milliseconds, the app sounds an audio confirmation <strong>BEEP</strong>, adds the item to the active cart, and displays a green confirmation banner: <em>"SpeedX Scanned & Added: [Product Name]"</em>.</li>
+      <li><strong>Live Scanner Diagnostic:</strong> In <em>Settings ➔ Hardware</em>, scan any item in the test input box to verify real-time decoding.</li>
+    </ul>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <!-- PAGE 4: POS BILLING & CUSTOMERS -->
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <div class="page-break"></div>
+
+  <div class="section-header">
+    <h1 class="section-title">3. POS Billing Terminal & Customer Records</h1>
+    <span class="section-tag">Counter Operations</span>
+  </div>
+
+  <h2>Cashier Keyboard Shortcuts</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 20%;">Shortcut</th>
+        <th style="width: 30%;">Action</th>
+        <th style="width: 50%;">Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="key-badge">F1</span></td>
+        <td><strong>Focus Search Bar</strong></td>
+        <td>Selects search box for typing product name, color, or manual code</td>
+      </tr>
+      <tr>
+        <td><span class="key-badge">F4</span></td>
+        <td><strong>Collect Payment</strong></td>
+        <td>Opens checkout payment window when items are in cart</td>
+      </tr>
+      <tr>
+        <td><span class="key-badge">F8</span></td>
+        <td><strong>Hold Active Cart</strong></td>
+        <td>Saves current cart in memory when customer picks extra clothes</td>
+      </tr>
+      <tr>
+        <td><span class="key-badge">ESC</span></td>
+        <td><strong>Cancel / Close</strong></td>
+        <td>Closes active modal, receipt preview, or discount window</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step-by-Step Checkout Workflow</h2>
+  <ul class="bullet-list">
+    <li><strong>1. Scan Items:</strong> Scan garment tags with the <strong>SpeedX Scanner</strong> or select product cards from the category grid.</li>
+    <li><strong>2. Customer Registration:</strong> Type the Customer's <strong>Name</strong> and <strong>Mobile Phone</strong> (e.g. <em>Usman Tariq, 03001234567</em>). If they are a new customer, their profile is <strong>automatically created and saved</strong> upon completing checkout!</li>
+    <li><strong>3. Discounts:</strong> Click <em>"Add Discount"</em> to apply a flat PKR amount or percentage deduction.</li>
+    <li><strong>4. Collect Payment:</strong> Press <span class="key-badge">F4</span>. Select <strong>Cash</strong> (system calculates change), <strong>Card</strong>, <strong>Bank Transfer (IBFT)</strong>, <strong>Khata (Credit)</strong>, or <strong>Split Payment</strong>.</li>
+    <li><strong>5. Thermal Receipt:</strong> Click <em>"Confirm & Print Receipt"</em> ➔ DTS thermal printer prints receipt and opens cash drawer.</li>
+  </ul>
+
+  <h2>Customer Records & Purchase History</h2>
+  <p>
+    Access via <strong>"Customer Records"</strong> in the left sidebar to view your store's customer database:
+  </p>
+  <ul class="bullet-list">
+    <li><strong>Lifetime Purchase Tracking:</strong> View total completed visits, total lifetime spend in PKR, and active Khata debt.</li>
+    <li><strong>Historical Invoice Drawer:</strong> Click <strong>[History]</strong> on any customer to inspect all past sales bills.</li>
+    <li><strong>1-Click Receipt Reprint:</strong> Click <strong>[Reprint DTS Receipt]</strong> on any past bill to reprint an exact copy on your thermal printer.</li>
+    <li><strong>Customer Khata Settlement:</strong> Record incoming customer credit payments, print signed vouchers, and export PDF/Excel statements.</li>
+  </ul>
+
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <!-- PAGE 5: INVENTORY, EXPENSES, P&L & BACKUPS -->
+  <!-- ═════════════════════════════════════════════════════════════════════ -->
+  <div class="page-break"></div>
+
+  <div class="section-header">
+    <h1 class="section-title">4. Inventory, Expenses, P&L & Backups</h1>
+    <span class="section-tag">Management</span>
+  </div>
+
+  <h2>Product Inventory & Moving WAC Costing</h2>
+  <ul class="bullet-list">
+    <li><strong>Variant Matrix:</strong> Manage garment items with multiple sizes (S, M, L, XL, 30, 32, 34) and colors with individual barcodes.</li>
+    <li><strong>Automatic Weighted Average Cost (WAC):</strong> When receiving new shipments at fluctuating prices, the system recalculates true stock valuation automatically: <em>WAC = (Old Stock Cost + New Shipment Cost) / Total Quantity</em>.</li>
+    <li><strong>Barcode Sticker Printing:</strong> Generate 50x30mm retail price stickers with scannable Code-128 barcodes directly to your TSC printer.</li>
+  </ul>
+
+  <h2>Operating Expenses & Staff Salaries</h2>
+  <ul class="bullet-list">
+    <li><strong>Daily Petty Cash:</strong> Record shop expenses (tea, customer refreshments, generator fuel, shopping bags) with instant daily totals.</li>
+    <li><strong>Monthly Overheads:</strong> Track major monthly expenses (Shop Rent, LESCO/K-Electric Bills, Internet) with billing month tracking.</li>
+    <li><strong>Staff Payroll Register:</strong> Register cashiers and sales staff with monthly salaries. Click <em>[Disburse Salary]</em> at month-end to auto-post payout entries.</li>
+  </ul>
+
+  <h2>Financial Analytics & Profit/Loss Statement</h2>
+  <ul class="bullet-list">
+    <li><strong>Trading Profit Statement:</strong> Gross Sales − Customer Discounts = Net Revenue. Net Revenue − Cost of Goods Sold (COGS at Moving WAC) = <strong>Gross Trading Profit</strong>.</li>
+    <li><strong>Net Operating Profit:</strong> Gross Profit − Operating Expenses (Rent, Bills, Salaries, Petty Cash) = <strong>Net Take-Home Profit</strong>.</li>
+    <li><strong>Stock Valuation:</strong> Complete audit of total capital invested in inventory at cost vs gross realizable retail value.</li>
+    <li><strong>Excel Exports:</strong> Download official spreadsheet reports with one click.</li>
+  </ul>
+
+  <h2>Database Backups & Data Protection</h2>
+  <ul class="bullet-list">
+    <li><strong>1-Second Hot Snapshot:</strong> Go to <em>Settings ➔ Database Backup</em> ➔ Click <strong>[Create Backup Now]</strong>. A complete transactional database snapshot is generated instantly.</li>
+    <li><strong>USB Flash Drive Copy:</strong> Click <strong>[Download]</strong> on any backup snapshot to copy the database file to a USB flash drive for safe offline storage.</li>
+  </ul>
+
+  <div class="footer-note">
+    Brand 4 Less Desktop Retail Suite • Developed for High-Performance Apparel & Retail Stores
+  </div>
+
+</body>
+</html>
