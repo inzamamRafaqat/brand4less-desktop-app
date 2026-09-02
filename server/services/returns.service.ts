@@ -69,9 +69,66 @@ export class ReturnsService {
       let sale: any = null;
       if (input.originalSaleId) {
         sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(input.originalSaleId);
+        if (!sale) throw new Error('Original sale not found.');
       }
 
       const customerId = input.customerId || (sale ? sale.customer_id : null);
+
+      // ── Validate each return line against reality ──────────────────────────
+      // Without this, a return could refund items never bought, in quantities
+      // never sold, at an arbitrary caller-supplied price.
+      const priceKey = (variantId: string, saleItemId?: string) => `${saleItemId || ''}|${variantId}`;
+      const alreadyReturned = new Map<string, number>();
+
+      if (sale) {
+        const priorRows = db
+          .prepare(
+            `SELECT ri.variant_id, ri.sale_item_id, SUM(ri.quantity) AS qty
+             FROM return_items ri JOIN returns r ON ri.return_id = r.id
+             WHERE r.original_sale_id = ? GROUP BY ri.variant_id, ri.sale_item_id`
+          )
+          .all(sale.id) as { variant_id: string; sale_item_id: string | null; qty: number }[];
+        priorRows.forEach((row) => alreadyReturned.set(priceKey(row.variant_id, row.sale_item_id || undefined), row.qty));
+      }
+
+      const normalizedItems = input.items.map((item) => {
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+          throw new Error('Return quantity must be a positive number.');
+        }
+
+        let refundUnitPrice = Number(item.refundUnitPrice);
+
+        if (sale) {
+          // Item must be tied to a real line on this sale.
+          const saleItem = item.saleItemId
+            ? (db.prepare('SELECT * FROM sale_items WHERE id = ? AND sale_id = ?').get(item.saleItemId, sale.id) as any)
+            : (db.prepare('SELECT * FROM sale_items WHERE sale_id = ? AND variant_id = ?').get(sale.id, item.variantId) as any);
+
+          if (!saleItem) {
+            throw new Error(`Item ${item.variantId} was not part of the original sale ${sale.invoice_number}.`);
+          }
+
+          const priorQty = alreadyReturned.get(priceKey(item.variantId, item.saleItemId)) || 0;
+          if (priorQty + item.quantity > saleItem.quantity) {
+            throw new Error(
+              `Return quantity for one item exceeds what was sold (sold ${saleItem.quantity}, already returned ${priorQty}).`
+            );
+          }
+
+          // Refund price is taken from the sale, never from the request. Cap at the
+          // effective price actually paid per unit on that line.
+          const effectiveUnitPaid = saleItem.quantity > 0 ? saleItem.subtotal / saleItem.quantity : saleItem.unit_price;
+          refundUnitPrice = Number(effectiveUnitPaid.toFixed(2));
+        } else {
+          // No-receipt return (manager-authorised): clamp to the current selling price.
+          const variant = db.prepare('SELECT selling_price FROM product_variants WHERE id = ?').get(item.variantId) as any;
+          if (!variant) throw new Error(`Product variant ${item.variantId} not found.`);
+          if (!Number.isFinite(refundUnitPrice) || refundUnitPrice < 0) refundUnitPrice = variant.selling_price;
+          refundUnitPrice = Math.min(refundUnitPrice, variant.selling_price);
+        }
+
+        return { ...item, refundUnitPrice };
+      });
 
       const insertReturnItem = db.prepare(`
         INSERT INTO return_items (id, return_id, sale_item_id, variant_id, quantity, refund_unit_price, unit_cost, subtotal)
@@ -90,10 +147,11 @@ export class ReturnsService {
         ) VALUES (?, ?, 'SALE_RETURN', ?, ?, ?, ?, ?, ?)
       `);
 
-      // Calculate total refund amount first
-      for (const item of input.items) {
+      // Calculate total refund amount first (from server-validated prices)
+      for (const item of normalizedItems) {
         totalRefundAmount += item.quantity * item.refundUnitPrice;
       }
+      totalRefundAmount = Number(totalRefundAmount.toFixed(2));
 
       // Record parent Return first for foreign key integrity
       db.prepare(`
@@ -110,11 +168,11 @@ export class ReturnsService {
         userId
       );
 
-      for (const item of input.items) {
+      for (const item of normalizedItems) {
         const variant = db.prepare('SELECT * FROM product_variants WHERE id = ?').get(item.variantId) as any;
         if (!variant) throw new Error(`Product variant ${item.variantId} not found.`);
 
-        const itemSubtotal = item.quantity * item.refundUnitPrice;
+        const itemSubtotal = Number((item.quantity * item.refundUnitPrice).toFixed(2));
 
         // Restore stock
         updateStock.run(item.quantity, item.variantId);

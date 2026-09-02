@@ -724,7 +724,7 @@ export class ProductService {
             if (isBar) {
               doc.rect(curX, barY, Math.max(0.6, wPt), barHeight).fill();
             }
-            curX += bwPt;
+            curX += wPt;
             isBar = !isBar;
           });
 

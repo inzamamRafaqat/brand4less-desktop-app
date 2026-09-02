@@ -7,9 +7,12 @@
     "dev:server": "tsx watch server/server.ts",
     "dev:ui": "vite",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
-    "electron:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\" \"electron electron/main.cjs\"",
+    "electron:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\" \"cross-env NODE_ENV=development electron electron/main.cjs\"",
     "build:ui": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
+    "build": "npm run build:ui && npm run build:server",
+    "start": "cross-env NODE_ENV=production node dist-server/server.js",
+    "electron:start": "cross-env NODE_ENV=production electron electron/main.cjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

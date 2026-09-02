@@ -38,9 +38,9 @@ export class PosService {
     const prefix = `INV-${dateStr}-`;
 
     const lastSale = db.prepare(`
-      SELECT invoice_number FROM sales 
-      WHERE invoice_number LIKE ? 
-      ORDER BY created_at DESC LIMIT 1
+      SELECT invoice_number FROM sales
+      WHERE invoice_number LIKE ?
+      ORDER BY invoice_number DESC LIMIT 1
     `).get(`${prefix}%`) as { invoice_number: string } | undefined;
 
     let seq = 1;
@@ -60,6 +60,35 @@ export class PosService {
     return runTransaction((db) => {
       if (!input.items || input.items.length === 0) {
         throw new Error('Cannot complete checkout with an empty cart.');
+      }
+
+      // Reject malformed line items and payments before touching inventory —
+      // negative / non-integer quantities would otherwise corrupt stock levels
+      // and negative prices would poison profit figures.
+      for (const item of input.items) {
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          throw new Error('Each cart line must have a positive whole-number quantity.');
+        }
+        if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+          throw new Error('Each cart line must have a valid non-negative unit price.');
+        }
+        if (item.discountAmount !== undefined && (!Number.isFinite(item.discountAmount) || item.discountAmount < 0)) {
+          throw new Error('Line discount must be a non-negative number.');
+        }
+      }
+      if (!Array.isArray(input.payments) || input.payments.length === 0) {
+        throw new Error('At least one payment entry is required.');
+      }
+      for (const p of input.payments) {
+        if (!Number.isFinite(p.amount) || p.amount <= 0) {
+          throw new Error('Each payment amount must be a positive number.');
+        }
+      }
+      if (input.overallDiscount !== undefined && (!Number.isFinite(input.overallDiscount) || input.overallDiscount < 0)) {
+        throw new Error('Overall discount must be a non-negative number.');
+      }
+      if (input.taxRatePercent !== undefined && (!Number.isFinite(input.taxRatePercent) || input.taxRatePercent < 0 || input.taxRatePercent > 100)) {
+        throw new Error('Tax rate must be between 0 and 100.');
       }
 
       // Check system setting for negative stock

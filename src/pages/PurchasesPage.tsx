@@ -419,7 +419,7 @@ export const PurchasesPage: React.FC = () => {
                       <td className="p-4 text-center">
                         {p.receipt_attachment_url ? (
                           <a
-                            href={`http://localhost:4000${p.receipt_attachment_url}`}
+                            href={p.receipt_attachment_url}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold text-[10px] inline-flex items-center space-x-1 hover:underline"

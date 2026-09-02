@@ -466,6 +466,6 @@ export class ReportService {
       });
     });
 
-    return (await workbook.xlsx.writeBuffer()) as Buffer;
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 }

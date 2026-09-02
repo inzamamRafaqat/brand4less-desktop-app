@@ -3,6 +3,19 @@ import { getDb, runTransaction } from '../database/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import { generateInternalSku, formatQrPayload } from '../domain/sku-generator.js';
 import { AuditService } from './audit.service.js';
+import { CONFIG, resolveInsideDir } from '../config/index.js';
+
+/**
+ * A caller-supplied import file path must point at a file we ourselves stored
+ * in the uploads directory — never an arbitrary path on disk (LFI).
+ */
+function assertUploadPath(filePath: string): string {
+  const resolved = resolveInsideDir(CONFIG.UPLOADS_DIR, filePath);
+  if (!resolved) {
+    throw new Error('Invalid import file reference.');
+  }
+  return resolved;
+}
 
 export interface ColumnMapping {
   name: string;
@@ -45,11 +58,12 @@ export class ImportService {
    * Reads headers from an Excel/CSV file and suggests field mappings.
    */
   static async analyzeFile(filePath: string): Promise<{ headers: string[]; suggestedMapping: Record<string, string>; sampleRows: any[] }> {
+    const safePath = assertUploadPath(filePath);
     const workbook = new ExcelJS.Workbook();
-    if (filePath.endsWith('.csv')) {
-      await workbook.csv.readFile(filePath);
+    if (safePath.endsWith('.csv')) {
+      await workbook.csv.readFile(safePath);
     } else {
-      await workbook.xlsx.readFile(filePath);
+      await workbook.xlsx.readFile(safePath);
     }
 
     const worksheet = workbook.worksheets[0];
@@ -138,11 +152,12 @@ export class ImportService {
     validCount: number;
     errorCount: number;
   }> {
+    const safePath = assertUploadPath(filePath);
     const workbook = new ExcelJS.Workbook();
-    if (filePath.endsWith('.csv')) {
-      await workbook.csv.readFile(filePath);
+    if (safePath.endsWith('.csv')) {
+      await workbook.csv.readFile(safePath);
     } else {
-      await workbook.xlsx.readFile(filePath);
+      await workbook.xlsx.readFile(safePath);
     }
 
     const worksheet = workbook.worksheets[0];
@@ -240,7 +255,7 @@ export class ImportService {
     const invalidRows = previewRows.filter((r) => !r.isValid);
     if (invalidRows.length === 0) {
       worksheet.addRow(['No errors found in dataset.']);
-      return (await workbook.xlsx.writeBuffer()) as Buffer;
+      return Buffer.from(await workbook.xlsx.writeBuffer());
     }
 
     // Get original header keys from first row data
@@ -270,16 +285,27 @@ export class ImportService {
       addedRow.getCell('errorMsg').font = { color: { argb: 'FFB91C1C' }, bold: true };
     });
 
-    return (await workbook.xlsx.writeBuffer()) as Buffer;
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   /**
    * Commits valid rows in a single batch transaction.
+   *
+   * The rows are ALWAYS re-parsed and re-validated on the server from the
+   * originally-uploaded file. The client's preview payload (and its `isValid`
+   * flags) is never trusted — a tampered client could otherwise inject
+   * negative prices, absurd quantities, or arbitrary SKUs straight into stock.
    */
   static async commitBulkImport(
-    previewRows: ImportPreviewRow[],
+    args: { filePath: string; mapping: ColumnMapping } | ImportPreviewRow[],
     userId: string
   ): Promise<{ importedCount: number; categoriesCreated: number }> {
+    if (Array.isArray(args) || !('filePath' in args) || !('mapping' in args)) {
+      throw new Error('Import commit requires the original file reference and column mapping.');
+    }
+
+    const { previewRows } = await this.previewAndValidate(args.filePath, args.mapping);
+
     return runTransaction((db) => {
       const validRows = previewRows.filter((r) => r.isValid);
       if (validRows.length === 0) throw new Error('No valid records to import');
