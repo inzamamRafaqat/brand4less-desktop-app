@@ -25,7 +25,7 @@ Welcome to the **Brand 4 Less Desktop Retail Suite**. This manual is designed fo
 
 ### Starting the Application
 1. Turn on your store PC.
-2. Launch **Brand 4 Less** from your desktop icon or open `http://localhost:5173` in your browser.
+2. Launch **Brand 4 Less** by double-clicking the application icon on your Windows Desktop.
 3. You will see the **Lock Screen / Login Page**.
 
 ### User Roles & Default Logins
@@ -321,7 +321,7 @@ Your data is stored locally in an offline-first **SQLite Database** with full AC
 
 ### Q4: How do I access the software from another counter/PC in the store?
 - **Solution**:
-  - Since the backend runs on port `4000` and Vite runs on port `5173`, any PC connected to the same store Wi-Fi / Local Area Network (LAN) can access the POS by typing your main computer's local IP address (e.g. `http://192.168.1.50:5173`).
+  - Any second billing PC or tablet connected to the same store Wi-Fi or Local Area Network (LAN) can connect directly to the main counter server PC to process sales concurrently.
 
 ---
 
