@@ -1,8 +1,89 @@
 const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const { fork, spawn } = require('child_process');
 
 let mainWindow = null;
+let serverProcess = null;
+
+const isDev = process.env.NODE_ENV !== 'production';
+const API_PORT = parseInt(process.env.PORT || '4000', 10);
+const API_HOST = process.env.HOST || '127.0.0.1';
+const API_ORIGIN = `http://${API_HOST}:${API_PORT}`;
+
+// ── Backend lifecycle ───────────────────────────────────────────────────────
+
+function waitForApi(timeoutMs = 30000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const ping = () => {
+      const req = http.get(`${API_ORIGIN}/api/health`, (res) => {
+        res.resume();
+        if (res.statusCode === 200) return resolve();
+        retry();
+      });
+      req.on('error', retry);
+      req.setTimeout(2000, () => req.destroy());
+    };
+    const retry = () => {
+      if (Date.now() - started > timeoutMs) return reject(new Error('API server did not become ready in time.'));
+      setTimeout(ping, 400);
+    };
+    ping();
+  });
+}
+
+function startBackend() {
+  // Dev is expected to run `npm run dev:server` (tsx watch) separately.
+  if (isDev) return Promise.resolve();
+
+  const compiled = path.join(__dirname, '../dist-server/server.js');
+  const source = path.join(__dirname, '../server/server.ts');
+  const env = { ...process.env, NODE_ENV: 'production', PORT: String(API_PORT), HOST: API_HOST };
+
+  if (fs.existsSync(compiled)) {
+    serverProcess = fork(compiled, [], { env, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  } else {
+    // Fallback: run the TypeScript entry directly via the locally-installed tsx.
+    const tsxBin = path.join(
+      __dirname,
+      '..',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
+    );
+    if (!fs.existsSync(tsxBin)) {
+      return Promise.reject(
+        new Error('No backend build found. Run "npm run build:server" (or "npm run build") before starting in production.')
+      );
+    }
+    serverProcess = spawn(tsxBin, [source], { env, stdio: ['ignore', 'inherit', 'inherit'], shell: false });
+  }
+
+  serverProcess.on('exit', (code) => {
+    serverProcess = null;
+    if (!app.isQuitting && code !== 0) {
+      dialog.showErrorBox('Brand 4 Less', `The background service stopped unexpectedly (code ${code}).`);
+      app.quit();
+    }
+  });
+
+  return waitForApi();
+}
+
+function stopBackend() {
+  if (serverProcess) {
+    try {
+      serverProcess.kill();
+    } catch (_) {
+      /* noop */
+    }
+    serverProcess = null;
+  }
+}
+
+// ── Window ──────────────────────────────────────────────────────────────────
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -20,14 +101,24 @@ function createWindow() {
     },
   });
 
-  const isDev = process.env.NODE_ENV !== 'production';
-
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
     // mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Production: the API server also serves the built UI on the same origin.
+    mainWindow.loadURL(API_ORIGIN);
   }
+
+  // Block navigation to arbitrary external origins.
+  const allowedOrigins = new Set([API_ORIGIN, 'http://localhost:5173']);
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      if (!allowedOrigins.has(new URL(url).origin)) event.preventDefault();
+    } catch (_) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -45,6 +136,9 @@ ipcMain.handle('print-receipt', async (event, { htmlContent, paperWidth }) => {
       height: 600,
       webPreferences: {
         nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        javascript: false,
       },
     });
 
@@ -99,7 +193,17 @@ ipcMain.handle('open-file-dialog', async (event, { filters }) => {
   return filePaths && filePaths.length > 0 ? filePaths[0] : null;
 });
 
-app.whenReady().then(() => {
+// ── App lifecycle ───────────────────────────────────────────────────────────
+
+app.whenReady().then(async () => {
+  try {
+    await startBackend();
+  } catch (err) {
+    dialog.showErrorBox('Brand 4 Less — Startup Error', String(err && err.message ? err.message : err));
+    app.quit();
+    return;
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -107,7 +211,13 @@ app.whenReady().then(() => {
   });
 });
 
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  stopBackend();
+});
+
 app.on('window-all-closed', () => {
+  stopBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }

@@ -17,10 +17,11 @@ export function seedDatabase(): void {
       VALUES (?, ?, ?, ?, ?, ?, 1)
     `);
 
-    insertUser.run(uuidv4(), 'admin', adminPasswordHash, '1234', 'System Administrator', 'ADMIN');
-    insertUser.run(uuidv4(), 'manager', adminPasswordHash, '5678', 'Store Manager', 'MANAGER');
-    insertUser.run(uuidv4(), 'cashier', staffPasswordHash, '0000', 'Front Desk Cashier', 'STAFF');
-    console.log('✅ Default users seeded (admin/admin123, manager/admin123, cashier/staff123)');
+    // PINs are stored as bcrypt hashes, same as passwords.
+    insertUser.run(uuidv4(), 'admin', adminPasswordHash, bcrypt.hashSync('1234', 10), 'System Administrator', 'ADMIN');
+    insertUser.run(uuidv4(), 'manager', adminPasswordHash, bcrypt.hashSync('5678', 10), 'Store Manager', 'MANAGER');
+    insertUser.run(uuidv4(), 'cashier', staffPasswordHash, bcrypt.hashSync('0000', 10), 'Front Desk Cashier', 'STAFF');
+    console.log('✅ Default users seeded — CHANGE THE DEFAULT PASSWORDS AND PINS IMMEDIATELY (admin/admin123, manager/admin123, cashier/staff123)');
   }
 
   // 2. Seed Standard Categories with specific icon types and attribute requirements
@@ -126,13 +127,13 @@ export function seedDatabase(): void {
     `);
 
     const insertVariant = db.prepare(`
-      INSERT INTO product_variants (id, product_id, sku, barcode, color, size, cost_price, selling_price, stock_quantity, min_stock_level, qr_code_payload, is_active)
+      INSERT INTO product_variants (id, product_id, sku, barcode, color, size, cost_price, selling_price, stock_quantity, min_stock_level, qr_code_data, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `);
 
     const insertStockMovement = db.prepare(`
-      INSERT INTO stock_movements (id, variant_id, movement_type, quantity_change, resulting_stock, unit_cost, reference_type, notes, user_id)
-      VALUES (?, ?, 'OPENING_STOCK', ?, ?, ?, 'MANUAL', 'Initial Store Opening Stock', ?)
+      INSERT INTO stock_movements (id, variant_id, movement_type, quantity_change, resulting_stock, cost_per_unit, reference_id, notes, user_id)
+      VALUES (?, ?, 'OPENING_STOCK', ?, ?, ?, 'OPENING', 'Initial Store Opening Stock', ?)
     `);
 
     const sampleCatalog = [

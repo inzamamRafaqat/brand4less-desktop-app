@@ -26,7 +26,7 @@ export class AuthService {
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, fullName: user.full_name },
       CONFIG.JWT_SECRET,
-      { expiresIn: CONFIG.JWT_EXPIRY }
+      { expiresIn: CONFIG.JWT_EXPIRY } as jwt.SignOptions
     );
 
     const { password_hash, pin_code, ...safeUser } = user;
@@ -34,11 +34,28 @@ export class AuthService {
   }
 
   /**
-   * Fast POS Cashier Login with 4-digit PIN
+   * Fast POS Cashier Login with 4-digit PIN.
+   * PINs are stored as bcrypt hashes; because the keyspace is tiny we compare
+   * against every active user rather than looking the PIN up directly.
    */
   static loginWithPin(pin: string): { token: string; user: any } {
     const db = getDb();
-    const user = db.prepare('SELECT * FROM users WHERE pin_code = ? AND is_active = 1').get(pin.trim()) as any;
+    const cleanPin = (pin || '').trim();
+    if (!/^\d{4,8}$/.test(cleanPin)) {
+      throw new Error('Invalid cashier PIN.');
+    }
+
+    const candidates = db
+      .prepare("SELECT * FROM users WHERE pin_code IS NOT NULL AND pin_code != '' AND is_active = 1")
+      .all() as any[];
+
+    const user = candidates.find((u) => {
+      try {
+        return bcrypt.compareSync(cleanPin, u.pin_code);
+      } catch {
+        return false;
+      }
+    });
 
     if (!user) {
       throw new Error('Invalid cashier PIN.');
@@ -47,7 +64,7 @@ export class AuthService {
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, fullName: user.full_name },
       CONFIG.JWT_SECRET,
-      { expiresIn: CONFIG.JWT_EXPIRY }
+      { expiresIn: CONFIG.JWT_EXPIRY } as jwt.SignOptions
     );
 
     const { password_hash, pin_code, ...safeUser } = user;
@@ -59,16 +76,32 @@ export class AuthService {
    */
   static verifyAdminPin(pin: string): boolean {
     const db = getDb();
-    const admin = db.prepare("SELECT id FROM users WHERE pin_code = ? AND role IN ('ADMIN', 'MANAGER') AND is_active = 1").get(pin.trim());
-    return !!admin;
+    const cleanPin = (pin || '').trim();
+    if (!/^\d{4,8}$/.test(cleanPin)) return false;
+
+    const admins = db
+      .prepare("SELECT pin_code FROM users WHERE pin_code IS NOT NULL AND pin_code != '' AND role IN ('ADMIN', 'MANAGER') AND is_active = 1")
+      .all() as { pin_code: string }[];
+
+    return admins.some((a) => {
+      try {
+        return bcrypt.compareSync(cleanPin, a.pin_code);
+      } catch {
+        return false;
+      }
+    });
   }
 
   /**
-   * Get all active system users
+   * Get all active system users. PIN hashes are never returned — a caller that
+   * could read them (e.g. a Manager) could impersonate any other user via PIN login.
    */
   static getUsers(): any[] {
     const db = getDb();
-    return db.prepare('SELECT id, username, pin_code, full_name, role, is_active, created_at FROM users ORDER BY role ASC, full_name ASC').all();
+    const rows = db
+      .prepare('SELECT id, username, pin_code, full_name, role, is_active, created_at FROM users ORDER BY role ASC, full_name ASC')
+      .all() as any[];
+    return rows.map(({ pin_code, ...u }) => ({ ...u, hasPin: !!pin_code }));
   }
 
   /**
@@ -81,10 +114,11 @@ export class AuthService {
     if (existing) throw new Error(`Username "${data.username}" already taken.`);
 
     const passwordHash = bcrypt.hashSync(data.password, 10);
+    const pinHash = data.pinCode && data.pinCode.trim() ? bcrypt.hashSync(data.pinCode.trim(), 10) : null;
     db.prepare(`
       INSERT INTO users (id, username, password_hash, pin_code, full_name, role, is_active)
       VALUES (?, ?, ?, ?, ?, ?, 1)
-    `).run(id, data.username.trim().toLowerCase(), passwordHash, data.pinCode || null, data.fullName.trim(), data.role);
+    `).run(id, data.username.trim().toLowerCase(), passwordHash, pinHash, data.fullName.trim(), data.role);
 
     AuditService.log({
       userId: currentUserId,
@@ -110,6 +144,11 @@ export class AuthService {
       passwordHash = bcrypt.hashSync(data.password.trim(), 10);
     }
 
+    let pinHash: string | null = null;
+    if (data.pinCode !== undefined) {
+      pinHash = data.pinCode && data.pinCode.trim() ? bcrypt.hashSync(data.pinCode.trim(), 10) : null;
+    }
+
     db.prepare(`
       UPDATE users
       SET full_name = COALESCE(?, full_name),
@@ -123,7 +162,7 @@ export class AuthService {
       data.fullName?.trim() || null,
       data.role || null,
       passwordHash,
-      data.pinCode !== undefined ? data.pinCode : null,
+      pinHash,
       data.isActive !== undefined ? data.isActive : null,
       id
     );

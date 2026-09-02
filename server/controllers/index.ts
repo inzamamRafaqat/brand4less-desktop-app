@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import path from 'path';
+import { routeParam } from '../utils/http.js';
 import { AuthService } from '../services/auth.service.js';
 import { ProductService } from '../services/product.service.js';
 import { ImportService } from '../services/import.service.js';
@@ -68,7 +69,7 @@ export class AuthController {
 
   static async updateUser(req: Request, res: Response): Promise<void> {
     try {
-      const user = AuthService.updateUser(req.params.id, req.body, req.user!.id);
+      const user = AuthService.updateUser(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, user });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -131,7 +132,7 @@ export class ProductController {
 
   static async getProductById(req: Request, res: Response): Promise<void> {
     try {
-      const product = ProductService.getProductById(req.params.id);
+      const product = ProductService.getProductById(routeParam(req.params.id));
       if (!product) {
         res.status(404).json({ success: false, message: 'Product not found' });
         return;
@@ -153,7 +154,7 @@ export class ProductController {
 
   static async updateProduct(req: Request, res: Response): Promise<void> {
     try {
-      const product = ProductService.updateProduct(req.params.id, req.body, req.user!.id);
+      const product = ProductService.updateProduct(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, product });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -162,7 +163,7 @@ export class ProductController {
 
   static async deleteProduct(req: Request, res: Response): Promise<void> {
     try {
-      ProductService.deleteProduct(req.params.id, req.user!.id);
+      ProductService.deleteProduct(routeParam(req.params.id), req.user!.id);
       res.json({ success: true, message: 'Product deleted' });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -245,8 +246,8 @@ export class ProductController {
 
   static async commitImport(req: Request, res: Response): Promise<void> {
     try {
-      const { previewRows } = req.body;
-      const result = await ImportService.commitBulkImport(previewRows, req.user!.id);
+      const { filePath, mapping } = req.body;
+      const result = await ImportService.commitBulkImport({ filePath, mapping }, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -282,7 +283,7 @@ export class PosController {
 
   static async getSaleById(req: Request, res: Response): Promise<void> {
     try {
-      const sale = PosService.getSaleById(req.params.id);
+      const sale = PosService.getSaleById(routeParam(req.params.id));
       if (!sale) {
         res.status(404).json({ success: false, message: 'Sale not found' });
         return;
@@ -313,7 +314,7 @@ export class PosController {
 
   static async getReceipt(req: Request, res: Response): Promise<void> {
     try {
-      const receipt = await PosService.getReceiptPayload(req.params.id);
+      const receipt = await PosService.getReceiptPayload(routeParam(req.params.id));
       res.json({ success: true, receipt });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -355,7 +356,7 @@ export class ReturnsController {
 
   static async getReturnById(req: Request, res: Response): Promise<void> {
     try {
-      const record = ReturnsService.getReturnById(req.params.id);
+      const record = ReturnsService.getReturnById(routeParam(req.params.id));
       if (!record) {
         res.status(404).json({ success: false, message: 'Return record not found' });
         return;
@@ -385,7 +386,7 @@ export class KhataController {
 
   static async getCustomerById(req: Request, res: Response): Promise<void> {
     try {
-      const customer = KhataService.getCustomerById(req.params.id);
+      const customer = KhataService.getCustomerById(routeParam(req.params.id));
       if (!customer) {
         res.status(404).json({ success: false, message: 'Customer not found' });
         return;
@@ -407,7 +408,7 @@ export class KhataController {
 
   static async updateCustomer(req: Request, res: Response): Promise<void> {
     try {
-      const customer = KhataService.updateCustomer(req.params.id, req.body, req.user!.id);
+      const customer = KhataService.updateCustomer(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, customer });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -416,7 +417,7 @@ export class KhataController {
 
   static async getCustomerPurchases(req: Request, res: Response): Promise<void> {
     try {
-      const purchases = KhataService.getCustomerPurchases(req.params.id);
+      const purchases = KhataService.getCustomerPurchases(routeParam(req.params.id));
       res.json({ success: true, purchases });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -426,7 +427,7 @@ export class KhataController {
   static async getLedger(req: Request, res: Response): Promise<void> {
     try {
       const { startDate, endDate } = req.query;
-      const result = KhataService.getCustomerLedger(req.params.id, startDate as string, endDate as string);
+      const result = KhataService.getCustomerLedger(routeParam(req.params.id), startDate as string, endDate as string);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -436,7 +437,7 @@ export class KhataController {
   static async recordPayment(req: Request, res: Response): Promise<void> {
     try {
       const { amount, paymentMethod, notes } = req.body;
-      const result = KhataService.recordPayment(req.params.id, amount, paymentMethod, notes, req.user!.id);
+      const result = KhataService.recordPayment(routeParam(req.params.id), amount, paymentMethod, notes, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -446,7 +447,7 @@ export class KhataController {
   static async exportExcel(req: Request, res: Response): Promise<void> {
     try {
       const { startDate, endDate } = req.query;
-      const buffer = await KhataService.exportStatementExcel(req.params.id, startDate as string, endDate as string);
+      const buffer = await KhataService.exportStatementExcel(routeParam(req.params.id), startDate as string, endDate as string);
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="khata_statement.xlsx"');
       res.send(buffer);
@@ -458,7 +459,7 @@ export class KhataController {
   static async exportPdf(req: Request, res: Response): Promise<void> {
     try {
       const { startDate, endDate } = req.query;
-      const buffer = await KhataService.exportStatementPdf(req.params.id, startDate as string, endDate as string);
+      const buffer = await KhataService.exportStatementPdf(routeParam(req.params.id), startDate as string, endDate as string);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'inline; filename="khata_statement.pdf"');
       res.send(buffer);
@@ -485,7 +486,7 @@ export class SupplierController {
 
   static async getSupplierById(req: Request, res: Response): Promise<void> {
     try {
-      const supplier = SupplierService.getSupplierById(req.params.id);
+      const supplier = SupplierService.getSupplierById(routeParam(req.params.id));
       if (!supplier) {
         res.status(404).json({ success: false, message: 'Supplier not found' });
         return;
@@ -507,7 +508,7 @@ export class SupplierController {
 
   static async updateSupplier(req: Request, res: Response): Promise<void> {
     try {
-      const supplier = SupplierService.updateSupplier(req.params.id, req.body, req.user!.id);
+      const supplier = SupplierService.updateSupplier(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, supplier });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -540,7 +541,7 @@ export class SupplierController {
 
   static async getPurchaseById(req: Request, res: Response): Promise<void> {
     try {
-      const purchase = SupplierService.getPurchaseById(req.params.id);
+      const purchase = SupplierService.getPurchaseById(routeParam(req.params.id));
       if (!purchase) {
         res.status(404).json({ success: false, message: 'Purchase not found' });
         return;
@@ -553,7 +554,7 @@ export class SupplierController {
 
   static async getLedger(req: Request, res: Response): Promise<void> {
     try {
-      const result = SupplierService.getSupplierLedger(req.params.id);
+      const result = SupplierService.getSupplierLedger(routeParam(req.params.id));
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -563,7 +564,7 @@ export class SupplierController {
   static async recordPayment(req: Request, res: Response): Promise<void> {
     try {
       const { amount, paymentMethod, notes } = req.body;
-      const result = SupplierService.recordPayment(req.params.id, amount, paymentMethod, notes, req.user!.id);
+      const result = SupplierService.recordPayment(routeParam(req.params.id), amount, paymentMethod, notes, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });
@@ -672,7 +673,7 @@ export class ExpenseController {
   static async approveSalary(req: Request, res: Response): Promise<void> {
     try {
       const { bonus, deductions, paymentMethod } = req.body;
-      const result = ExpenseService.approveSalary(req.params.id, bonus, deductions, paymentMethod, req.user!.id);
+      const result = ExpenseService.approveSalary(routeParam(req.params.id), bonus, deductions, paymentMethod, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message });

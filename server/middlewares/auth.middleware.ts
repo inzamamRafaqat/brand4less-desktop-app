@@ -21,7 +21,14 @@ declare global {
 
 export function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  // Header is the primary source. A `?token=` query param is accepted only as a
+  // fallback for browser-native downloads (<a href>) that cannot set headers.
+  const token =
+    authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : typeof req.query.token === 'string' && req.query.token
+        ? req.query.token
+        : null;
 
   if (!token) {
     res.status(401).json({ success: false, message: 'Authentication required. No token provided.' });

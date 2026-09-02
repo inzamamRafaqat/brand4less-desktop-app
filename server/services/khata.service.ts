@@ -326,7 +326,7 @@ export class KhataService {
     });
     summaryRow.font = { bold: true };
 
-    return (await workbook.xlsx.writeBuffer()) as Buffer;
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   static async exportStatementPdf(customerId: string, startDate?: string, endDate?: string): Promise<Buffer> {

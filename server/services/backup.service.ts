@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { getDb, closeDb } from '../database/db.js';
-import { CONFIG } from '../config/index.js';
+import { CONFIG, resolveInsideDir } from '../config/index.js';
 import { AuditService } from './audit.service.js';
 import { runMigrations } from '../database/migrations.js';
 
@@ -100,8 +100,8 @@ export class BackupService {
    * Restores database from a selected backup file.
    */
   static restoreBackup(filename: string, userId: string): boolean {
-    const backupPath = path.join(CONFIG.BACKUPS_DIR, filename);
-    if (!fs.existsSync(backupPath)) {
+    const backupPath = resolveInsideDir(CONFIG.BACKUPS_DIR, filename);
+    if (!backupPath || !backupPath.endsWith('.db') || !fs.existsSync(backupPath)) {
       throw new Error(`Backup file ${filename} does not exist.`);
     }
 

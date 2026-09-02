@@ -672,7 +672,7 @@ export const SettingsPage: React.FC = () => {
                           </button>
 
                           <a
-                            href={`http://localhost:4000/api/backup/download/${b.filename}`}
+                            href={api.downloadUrl(`/backup/download/${encodeURIComponent(b.filename)}`)}
                             download
                             className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-950 dark:hover:bg-white hover:text-white dark:hover:text-slate-950 rounded-lg text-slate-700 dark:text-slate-300 text-xs font-bold transition inline-flex items-center space-x-1"
                           >

@@ -116,8 +116,11 @@ export const BulkImportPage: React.FC<BulkImportPageProps> = ({ setActiveTab }) 
     setErrorMsg('');
 
     try {
+      // The server re-parses and re-validates from the original upload; it does
+      // not trust the preview rows. Send the file reference + mapping only.
       const res = await api.post('/products/import/commit', {
-        previewRows: previewData.previewRows,
+        filePath,
+        mapping,
       });
 
       setImportResult(res);
@@ -243,7 +246,7 @@ export const BulkImportPage: React.FC<BulkImportPageProps> = ({ setActiveTab }) 
             </button>
 
             <a
-              href="http://localhost:4000/api/products/import/template"
+              href={api.downloadUrl('/products/import/template')}
               download="Brand4Less_Product_Import_Template.xlsx"
               className="w-full sm:w-auto px-6 py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-2xl border border-slate-200 dark:border-slate-700 transition flex items-center justify-center space-x-2"
             >

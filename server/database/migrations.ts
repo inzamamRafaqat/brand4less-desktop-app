@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
 
 export function runMigrations(): void {
@@ -319,6 +320,24 @@ export function runMigrations(): void {
     CREATE INDEX IF NOT EXISTS idx_stock_movements_variant_id ON stock_movements(variant_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
   `);
+
+  // ── Data migration: hash any legacy plaintext quick-POS PINs in place ──────
+  // Older builds stored `pin_code` as cleartext (e.g. "1234"). Anyone who could
+  // read the users table could then log in as that user. Upgrade them to bcrypt.
+  const legacyPins = db
+    .prepare("SELECT id, pin_code FROM users WHERE pin_code IS NOT NULL AND pin_code != '' AND pin_code NOT LIKE '$2%'")
+    .all() as { id: string; pin_code: string }[];
+
+  if (legacyPins.length > 0) {
+    const updatePin = db.prepare('UPDATE users SET pin_code = ? WHERE id = ?');
+    const tx = db.transaction((rows: { id: string; pin_code: string }[]) => {
+      for (const row of rows) {
+        updatePin.run(bcrypt.hashSync(String(row.pin_code).trim(), 10), row.id);
+      }
+    });
+    tx(legacyPins);
+    console.log(`🔐 Migrated ${legacyPins.length} plaintext POS PIN(s) to bcrypt hashes.`);
+  }
 
   console.log('✅ SQLite database schema & indexes verified successfully.');
 }

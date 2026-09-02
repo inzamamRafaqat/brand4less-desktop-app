@@ -107,7 +107,7 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ items, onC
     if (labelsToPrint.length === 0) return;
     setIsDownloadingPdf(true);
     try {
-      const response = await fetch('http://localhost:4000/api/products/labels/pdf', {
+      const response = await fetch('/api/products/labels/pdf', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -17,8 +17,10 @@ node_modules/
 # Production build artifacts
 dist/
 dist-electron/
+dist-server/
 dist-ssr/
 *.local
+*.tsbuildinfo
 
 # Environment variables
 .env
@@ -29,10 +31,17 @@ dist-ssr/
 
 # SQLite Database, WAL and Backups
 data/brand4less.db*
-data/backups/*.db
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/*
 data/uploads/*
 !data/uploads/.gitkeep
 !data/backups/.gitkeep
+
+# Auto-generated local JWT signing secret
+data/.jwt-secret
+.jwt-secret
 
 # IDE and OS metadata
 .vscode/*

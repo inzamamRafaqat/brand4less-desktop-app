@@ -93,7 +93,7 @@ export const ReportsPage: React.FC = () => {
   const exportPnlExcel = async () => {
     try {
       const token = localStorage.getItem('brand4less_token') || '';
-      const response = await fetch(`http://localhost:4000/api/reports/sales/export-excel?startDate=${startDate}&endDate=${endDate}`, {
+      const response = await fetch(`/api/reports/sales/export-excel?startDate=${startDate}&endDate=${endDate}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
