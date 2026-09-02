@@ -7,6 +7,7 @@ import { CONFIG } from './config/index.js';
 import { runMigrations } from './database/migrations.js';
 import { seedDatabase } from './database/seed.js';
 import { apiRouter } from './routes/api.router.js';
+import { clientMessage } from './utils/errors.js';
 
 export function createApp(): express.Application {
   const app = express();
@@ -98,7 +99,7 @@ export function createApp(): express.Application {
       err?.expose === true;
 
     if (isClientError) {
-      res.status(err.status || 400).json({ success: false, message: err.message });
+      res.status(err.status || 400).json({ success: false, message: clientMessage(err) });
       return;
     }
 

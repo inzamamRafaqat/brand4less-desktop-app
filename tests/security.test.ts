@@ -135,4 +135,23 @@ describe('Security & integrity hardening', () => {
       ImportService.commitBulkImport([{ isValid: true } as any], adminId)
     ).rejects.toThrow(/original file reference/);
   });
+
+  it('sanitises low-level errors but passes deliberate ones through', async () => {
+    const { clientMessage } = await import('../server/utils/errors.js');
+
+    expect(clientMessage(new Error('Insufficient stock for "Polo".'))).toBe('Insufficient stock for "Polo".');
+
+    const sqliteErr = Object.assign(new Error('UNIQUE constraint failed: users.username'), {
+      name: 'SqliteError',
+      code: 'SQLITE_CONSTRAINT_UNIQUE',
+    });
+    const msg = clientMessage(sqliteErr);
+    expect(msg).not.toMatch(/users\.username|constraint/i);
+    expect(msg).toBe('A record with these details already exists.');
+
+    expect(clientMessage(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe(
+      'Something went wrong. Please try again.'
+    );
+    expect(clientMessage('a bare string')).toBe('Something went wrong. Please try again.');
+  });
 });

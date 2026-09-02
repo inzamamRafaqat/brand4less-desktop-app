@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import { routeParam } from '../utils/http.js';
+import { clientMessage } from '../utils/errors.js';
 import { AuthService } from '../services/auth.service.js';
 import { ProductService } from '../services/product.service.js';
 import { ImportService } from '../services/import.service.js';
@@ -21,7 +22,7 @@ export class AuthController {
       const result = AuthService.login(username, password);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -31,7 +32,7 @@ export class AuthController {
       const result = AuthService.loginWithPin(pin);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -41,7 +42,7 @@ export class AuthController {
       const isValid = AuthService.verifyAdminPin(pin);
       res.json({ success: true, valid: isValid });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -54,7 +55,7 @@ export class AuthController {
       const users = AuthService.getUsers();
       res.json({ success: true, users });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -63,7 +64,7 @@ export class AuthController {
       const user = AuthService.createUser(req.body, req.user!.id);
       res.json({ success: true, user });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -72,7 +73,7 @@ export class AuthController {
       const user = AuthService.updateUser(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, user });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -81,7 +82,7 @@ export class AuthController {
       const settings = AuthService.getSettings();
       res.json({ success: true, settings });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -90,7 +91,7 @@ export class AuthController {
       const settings = AuthService.updateSettings(req.body, req.user!.id);
       res.json({ success: true, settings });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -101,7 +102,7 @@ export class ProductController {
       const categories = ProductService.getCategories();
       res.json({ success: true, categories });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -110,7 +111,7 @@ export class ProductController {
       const category = ProductService.createCategory(req.body);
       res.json({ success: true, category });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -126,7 +127,7 @@ export class ProductController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -139,7 +140,7 @@ export class ProductController {
       }
       res.json({ success: true, product });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -148,7 +149,7 @@ export class ProductController {
       const product = ProductService.createProductWithVariants(req.body, req.user!.id);
       res.json({ success: true, product });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -157,7 +158,7 @@ export class ProductController {
       const product = ProductService.updateProduct(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, product });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -166,7 +167,7 @@ export class ProductController {
       ProductService.deleteProduct(routeParam(req.params.id), req.user!.id);
       res.json({ success: true, message: 'Product deleted' });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -176,7 +177,7 @@ export class ProductController {
       const variants = ProductService.searchVariantsForPos(q as string || '', categoryId as string || '');
       res.json({ success: true, variants });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -186,7 +187,7 @@ export class ProductController {
       const result = ProductService.adjustStock(variantId, movementType, quantityChange, notes, req.user!.id);
       res.json({ success: true, result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -195,7 +196,7 @@ export class ProductController {
       const items = ProductService.getLowStockVariants();
       res.json({ success: true, items });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -209,7 +210,7 @@ export class ProductController {
       const result = await ImportService.analyzeFile(req.file.path);
       res.json({ success: true, ...result, filePath: req.file.path });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -219,7 +220,7 @@ export class ProductController {
       const result = await ImportService.previewAndValidate(filePath, mapping);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -228,7 +229,7 @@ export class ProductController {
       const templatePath = path.join(process.cwd(), 'Brand4Less_Product_Import_Template.xlsx');
       res.download(templatePath, 'Brand4Less_Product_Import_Template.xlsx');
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -240,7 +241,7 @@ export class ProductController {
       res.setHeader('Content-Disposition', 'attachment; filename="import_errors.xlsx"');
       res.send(buffer);
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -250,7 +251,7 @@ export class ProductController {
       const result = await ImportService.commitBulkImport({ filePath, mapping }, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -266,7 +267,7 @@ export class ProductController {
       res.setHeader('Content-Disposition', 'attachment; filename="brand4less_barcode_labels.pdf"');
       res.send(buffer);
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -277,7 +278,7 @@ export class PosController {
       const sale = PosService.checkout(req.body, req.user!.id);
       res.json({ success: true, sale });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -290,7 +291,7 @@ export class PosController {
       }
       res.json({ success: true, sale });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -308,7 +309,7 @@ export class PosController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -317,7 +318,7 @@ export class PosController {
       const receipt = await PosService.getReceiptPayload(routeParam(req.params.id));
       res.json({ success: true, receipt });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -328,7 +329,7 @@ export class ReturnsController {
       const result = ReturnsService.processReturn(req.body, req.user!.id);
       res.json({ success: true, result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -337,7 +338,7 @@ export class ReturnsController {
       const result = ReturnsService.processExchange(req.body, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -350,7 +351,7 @@ export class ReturnsController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -363,7 +364,7 @@ export class ReturnsController {
       }
       res.json({ success: true, return: record });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -380,7 +381,7 @@ export class KhataController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -393,7 +394,7 @@ export class KhataController {
       }
       res.json({ success: true, customer });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -402,7 +403,7 @@ export class KhataController {
       const customer = KhataService.createCustomer(req.body, req.user!.id);
       res.json({ success: true, customer });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -411,7 +412,7 @@ export class KhataController {
       const customer = KhataService.updateCustomer(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, customer });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -420,7 +421,7 @@ export class KhataController {
       const purchases = KhataService.getCustomerPurchases(routeParam(req.params.id));
       res.json({ success: true, purchases });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -430,7 +431,7 @@ export class KhataController {
       const result = KhataService.getCustomerLedger(routeParam(req.params.id), startDate as string, endDate as string);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -440,7 +441,7 @@ export class KhataController {
       const result = KhataService.recordPayment(routeParam(req.params.id), amount, paymentMethod, notes, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -452,7 +453,7 @@ export class KhataController {
       res.setHeader('Content-Disposition', 'attachment; filename="khata_statement.xlsx"');
       res.send(buffer);
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -464,7 +465,7 @@ export class KhataController {
       res.setHeader('Content-Disposition', 'inline; filename="khata_statement.pdf"');
       res.send(buffer);
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -480,7 +481,7 @@ export class SupplierController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -493,7 +494,7 @@ export class SupplierController {
       }
       res.json({ success: true, supplier });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -502,7 +503,7 @@ export class SupplierController {
       const supplier = SupplierService.createSupplier(req.body, req.user!.id);
       res.json({ success: true, supplier });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -511,7 +512,7 @@ export class SupplierController {
       const supplier = SupplierService.updateSupplier(routeParam(req.params.id), req.body, req.user!.id);
       res.json({ success: true, supplier });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -520,7 +521,7 @@ export class SupplierController {
       const purchase = SupplierService.createPurchase(req.body, req.user!.id);
       res.json({ success: true, purchase });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -535,7 +536,7 @@ export class SupplierController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -548,7 +549,7 @@ export class SupplierController {
       }
       res.json({ success: true, purchase });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -557,7 +558,7 @@ export class SupplierController {
       const result = SupplierService.getSupplierLedger(routeParam(req.params.id));
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -567,7 +568,7 @@ export class SupplierController {
       const result = SupplierService.recordPayment(routeParam(req.params.id), amount, paymentMethod, notes, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -578,7 +579,7 @@ export class ExpenseController {
       const categories = ExpenseService.getExpenseCategories();
       res.json({ success: true, categories });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -587,7 +588,7 @@ export class ExpenseController {
       const category = ExpenseService.createExpenseCategory(req.body.name, req.body.description);
       res.json({ success: true, category });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -603,7 +604,7 @@ export class ExpenseController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -612,7 +613,7 @@ export class ExpenseController {
       const expense = ExpenseService.createExpense(req.body, req.user!.id);
       res.json({ success: true, expense });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -621,7 +622,7 @@ export class ExpenseController {
       const employees = ExpenseService.getEmployees();
       res.json({ success: true, employees });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -630,7 +631,7 @@ export class ExpenseController {
       const employee = ExpenseService.createEmployee(req.body, req.user!.id);
       res.json({ success: true, employee });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -639,7 +640,7 @@ export class ExpenseController {
       const disbursements = ExpenseService.getSalaryDisbursements(req.query.monthYear as string);
       res.json({ success: true, disbursements });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -648,7 +649,7 @@ export class ExpenseController {
       const result = ExpenseService.generateMonthlyPayroll(req.body.monthYear, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -657,7 +658,7 @@ export class ExpenseController {
       const summary = ExpenseService.getMonthlyExpensesSummary(req.query.year as string);
       res.json({ success: true, summary });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -666,7 +667,7 @@ export class ExpenseController {
       const result = ExpenseService.disburseDirectSalary(req.body, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -676,7 +677,7 @@ export class ExpenseController {
       const result = ExpenseService.approveSalary(routeParam(req.params.id), bonus, deductions, paymentMethod, req.user!.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -687,7 +688,7 @@ export class ReportController {
       const data = ReportService.getDashboardSummary();
       res.json({ success: true, data });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -697,7 +698,7 @@ export class ReportController {
       const data = ReportService.getProfitAndLoss(startDate as string, endDate as string);
       res.json({ success: true, pnl: data, ...data });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -714,7 +715,7 @@ export class ReportController {
       });
       res.json({ success: true, sales: result.sales, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -731,7 +732,7 @@ export class ReportController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -740,7 +741,7 @@ export class ReportController {
       const data = ReportService.getInventoryValuation();
       res.json({ success: true, valuation: data, ...data });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -752,7 +753,7 @@ export class ReportController {
       res.setHeader('Content-Disposition', 'attachment; filename="sales_report.xlsx"');
       res.send(buffer);
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -767,7 +768,7 @@ export class ReportController {
       });
       res.json({ success: true, logs });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -778,7 +779,7 @@ export class BackupController {
       const backup = BackupService.createBackup(req.body.label);
       res.json({ success: true, backup });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -787,7 +788,7 @@ export class BackupController {
       const backups = BackupService.listBackups();
       res.json({ success: true, backups });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -796,7 +797,7 @@ export class BackupController {
       BackupService.restoreBackup(req.body.filename, req.user!.id);
       res.json({ success: true, message: `Database successfully restored from ${req.body.filename}` });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
 }
@@ -807,7 +808,7 @@ export class HardwareController {
       const printers = await HardwareService.getConnectedPrinters();
       res.json({ success: true, printers });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -817,7 +818,7 @@ export class HardwareController {
       const result = await HardwareService.testTscPrinter(printerName);
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -827,7 +828,7 @@ export class HardwareController {
       const result = await HardwareService.testDtsPrinter(printerName);
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -840,7 +841,7 @@ export class HardwareController {
       }
       res.json({ success: true, tspl, message: 'TSPL command dispatched to TSC printer' });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 
@@ -854,7 +855,7 @@ export class HardwareController {
       res.setHeader('Content-Type', 'application/octet-stream');
       res.send(buffer);
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
 }
