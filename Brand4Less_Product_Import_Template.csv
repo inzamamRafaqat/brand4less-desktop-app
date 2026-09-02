@@ -1,0 +1,10 @@
+SKU,Product Name,Category,Subcategory,Color,Size,Origin,Brand,Purchase Price,Selling Price,Opening Stock,Minimum Stock,Barcode,Image,Status
+B4L-TSH-BLK-M-01,Crewneck Essential T-Shirt,T-Shirts,Casual Wear,Black,M,Local,Brand 4 Less,650,1200,25,5,890123456701,,Active
+B4L-TSH-BLK-L-01,Crewneck Essential T-Shirt,T-Shirts,Casual Wear,Black,L,Local,Brand 4 Less,650,1200,30,5,890123456702,,Active
+B4L-POL-NVY-XL-02,Classic Pique Polo Shirt,Polo Shirts,Semi-Formal,Navy Blue,XL,Imported,Zara Men,1200,2400,15,3,890123456703,,Active
+B4L-CSH-WHT-L-03,Oxford Button-Down Casual Shirt,Casual Shirts,Shirts,White,L,Local,Outfitters,1400,2800,20,4,890123456704,,Active
+B4L-JNS-BLU-32-04,Slim Fit Stretch Denim Jeans,Jeans,Denim,Dark Blue,32,Imported,Levi Strauss,1800,3500,18,3,890123456705,,Active
+B4L-WCH-SLV-05,Chronograph Quartz Wristwatch,Watches,Accessories,Silver,Standard,Imported,Curren,2200,4500,10,2,890123456707,,Active
+B4L-WLT-BRN-06,Genuine Leather Bi-Fold Wallet,Leather Wallets,Leather Goods,Brown,Standard,Local,J. Leather,850,1800,12,3,890123456708,,Active
+B4L-BLT-BLK-36-07,Formal Reversible Leather Belt,Belts,Accessories,Black,36,Local,Hub Leather,700,1500,14,3,890123456709,,Active
+B4L-PRF-GLD-100-08,Royal Oud Eau De Parfum 100ml,Perfumes,Fragrances,Gold,100ml,Imported,Lattafa,3200,6500,8,2,890123456710,,Active
