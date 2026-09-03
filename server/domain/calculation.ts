@@ -144,11 +144,16 @@ export function calculateSaleTotals(
 
 /**
  * Calculates net profit of the business across any time window.
- * Formula: Sales Gross Profit - Returns Lost Profit - Operating Expenses - Salaries
+ * Formula: Sales Gross Profit - Returns Profit Reversal - Operating Expenses - Salaries
+ *
+ * `returnsProfitReversal` is the *margin* handed back through returns in the
+ * period (refund value minus the cost of the goods that came back), not the
+ * gross refund amount — subtracting the gross refund would double-count the
+ * COGS portion that was never profit.
  */
 export function calculatePeriodNetProfit(
   salesGrossProfit: number,
-  returnsRefundLoss: number,
+  returnsProfitReversal: number,
   operatingExpenses: number,
   salariesPaid: number
 ): {
@@ -156,7 +161,7 @@ export function calculatePeriodNetProfit(
   netOperatingProfit: number;
   totalOperatingCosts: number;
 } {
-  const adjustedGrossProfit = salesGrossProfit - returnsRefundLoss;
+  const adjustedGrossProfit = salesGrossProfit - returnsProfitReversal;
   const totalOperatingCosts = operatingExpenses + salariesPaid;
   const netOperatingProfit = Number((adjustedGrossProfit - totalOperatingCosts).toFixed(2));
 

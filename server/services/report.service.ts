@@ -45,9 +45,26 @@ export class ReportService {
       WHERE created_at >= ?
     `).get(`${monthPrefix}-01 00:00:00`) as { total_returns: number };
 
+    // Revenue / profit given back through returns in each window — the sale rows
+    // above still count these at full value, so net them out here.
+    const reversalSince = (fromTs: string) =>
+      db.prepare(`
+        SELECT
+          COALESCE(SUM(ri.subtotal), 0) as rev,
+          COALESCE(SUM(ri.quantity * ri.unit_cost), 0) as cogs
+        FROM return_items ri
+        JOIN returns r ON ri.return_id = r.id
+        WHERE r.created_at >= ?
+      `).get(fromTs) as { rev: number; cogs: number };
+
+    const todayReversal = reversalSince(`${todayStr} 00:00:00`);
+    const monthReversal = reversalSince(`${monthPrefix}-01 00:00:00`);
+    const todayReturnsProfit = Number((todayReversal.rev - todayReversal.cogs).toFixed(2));
+    const monthReturnsProfit = Number((monthReversal.rev - monthReversal.cogs).toFixed(2));
+
     const monthNetProfit = calculatePeriodNetProfit(
       monthSales.gross_profit,
-      0, // Item costs already captured in sale profit
+      monthReturnsProfit, // margin handed back through returns this month
       monthExpenses.total_expenses,
       0 // Salaries already posted into expenses
     );
@@ -147,13 +164,13 @@ export class ReportService {
 
     return {
       today: {
-        sales: todaySales.total_sales,
-        grossProfit: todaySales.gross_profit,
+        sales: Number((todaySales.total_sales - todayReversal.rev).toFixed(2)),
+        grossProfit: Number((todaySales.gross_profit - todayReturnsProfit).toFixed(2)),
         transactions: todaySales.transaction_count,
       },
       thisMonth: {
-        sales: monthSales.total_sales,
-        grossProfit: monthSales.gross_profit,
+        sales: Number((monthSales.total_sales - monthReversal.rev).toFixed(2)),
+        grossProfit: Number((monthSales.gross_profit - monthReturnsProfit).toFixed(2)),
         expenses: monthExpenses.total_expenses,
         returns: monthReturns.total_returns,
         netProfit: monthNetProfit.netOperatingProfit,
@@ -222,6 +239,23 @@ export class ReportService {
       ${retWhere}
     `).get(...retParams) as { total_returns: number };
 
+    // A return reverses part of a past sale. The sale rows above still carry
+    // their full value (status is only flagged, never CANCELLED), so the
+    // period's returns must be netted back out of revenue, COGS and profit —
+    // attributed by return date, not the original sale date.
+    const returnsReversal = db.prepare(`
+      SELECT
+        COALESCE(SUM(ri.subtotal), 0) as returns_revenue,
+        COALESCE(SUM(ri.quantity * ri.unit_cost), 0) as returns_cogs
+      FROM return_items ri
+      JOIN returns r ON ri.return_id = r.id
+      ${retWhere}
+    `).get(...retParams) as { returns_revenue: number; returns_cogs: number };
+
+    const returnsRevenue = Number(returnsReversal.returns_revenue.toFixed(2));
+    const returnsCogs = Number(returnsReversal.returns_cogs.toFixed(2));
+    const returnsProfitReversal = Number((returnsRevenue - returnsCogs).toFixed(2));
+
     // Expenses breakdown by category
     const expensesByCategory = db.prepare(`
       SELECT 
@@ -236,9 +270,12 @@ export class ReportService {
 
     const totalExpenses = expensesByCategory.reduce((sum, c) => sum + c.category_total, 0);
 
-    const netOperatingProfit = Number((salesTotals.gross_profit - totalExpenses).toFixed(2));
-    const grossMarginPercent = salesTotals.net_sales > 0 ? Number(((salesTotals.gross_profit / salesTotals.net_sales) * 100).toFixed(1)) : 0;
-    const netMarginPercent = salesTotals.net_sales > 0 ? Number(((netOperatingProfit / salesTotals.net_sales) * 100).toFixed(1)) : 0;
+    const netSales = Number((salesTotals.net_sales - returnsRevenue).toFixed(2));
+    const cogs = Number((salesTotals.total_cogs - returnsCogs).toFixed(2));
+    const grossProfit = Number((salesTotals.gross_profit - returnsProfitReversal).toFixed(2));
+    const netOperatingProfit = Number((grossProfit - totalExpenses).toFixed(2));
+    const grossMarginPercent = netSales > 0 ? Number(((grossProfit / netSales) * 100).toFixed(1)) : 0;
+    const netMarginPercent = netSales > 0 ? Number(((netOperatingProfit / netSales) * 100).toFixed(1)) : 0;
 
     return {
       period: { startDate: startDate || 'All Time', endDate: endDate || 'Current' },
@@ -246,13 +283,21 @@ export class ReportService {
         grossSales: salesTotals.gross_sales,
         discounts: salesTotals.total_discounts,
         tax: salesTotals.total_tax,
-        netSales: salesTotals.net_sales,
-        cogs: salesTotals.total_cogs,
-        grossProfit: salesTotals.gross_profit,
+        // Net of returns booked in the period.
+        netSales,
+        cogs,
+        grossProfit,
         grossMarginPercent,
+        // Pre-returns figures, kept for drill-down.
+        netSalesBeforeReturns: salesTotals.net_sales,
+        cogsBeforeReturns: salesTotals.total_cogs,
+        grossProfitBeforeReturns: salesTotals.gross_profit,
       },
       returns: {
         totalReturnsAmount: returnsTotals.total_returns,
+        revenueReversed: returnsRevenue,
+        cogsReversed: returnsCogs,
+        profitReversed: returnsProfitReversal,
       },
       expenses: {
         breakdown: expensesByCategory,

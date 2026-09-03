@@ -29,11 +29,12 @@ export class ReturnsService {
   private static generateReturnNumber(db: any): string {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `RET-${today}-`;
-    const last = db.prepare(`SELECT return_number FROM returns WHERE return_number LIKE ? ORDER BY created_at DESC LIMIT 1`).get(`${prefix}%`) as { return_number: string } | undefined;
+    // Order by the number itself, not created_at — same-second rows tie and the
+    // "last" one is then arbitrary, producing duplicate sequences.
+    const last = db.prepare(`SELECT return_number FROM returns WHERE return_number LIKE ? ORDER BY return_number DESC LIMIT 1`).get(`${prefix}%`) as { return_number: string } | undefined;
     let seq = 1;
     if (last?.return_number) {
-      const parts = last.return_number.split('-');
-      const lastSeq = parseInt(parts[2], 10);
+      const lastSeq = parseInt(last.return_number.split('-')[2], 10);
       if (!isNaN(lastSeq)) seq = lastSeq + 1;
     }
     return `${prefix}${String(seq).padStart(4, '0')}`;
@@ -42,11 +43,10 @@ export class ReturnsService {
   private static generateExchangeNumber(db: any): string {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `EXC-${today}-`;
-    const last = db.prepare(`SELECT exchange_number FROM exchanges WHERE exchange_number LIKE ? ORDER BY created_at DESC LIMIT 1`).get(`${prefix}%`) as { exchange_number: string } | undefined;
+    const last = db.prepare(`SELECT exchange_number FROM exchanges WHERE exchange_number LIKE ? ORDER BY exchange_number DESC LIMIT 1`).get(`${prefix}%`) as { exchange_number: string } | undefined;
     let seq = 1;
     if (last?.exchange_number) {
-      const parts = last.exchange_number.split('-');
-      const lastSeq = parseInt(parts[2], 10);
+      const lastSeq = parseInt(last.exchange_number.split('-')[2], 10);
       if (!isNaN(lastSeq)) seq = lastSeq + 1;
     }
     return `${prefix}${String(seq).padStart(4, '0')}`;
@@ -80,6 +80,11 @@ export class ReturnsService {
       const priceKey = (variantId: string, saleItemId?: string) => `${saleItemId || ''}|${variantId}`;
       const alreadyReturned = new Map<string, number>();
 
+      // Fraction of each line's subtotal the customer actually paid once the
+      // invoice-level discount and tax are spread across the sale. Refunding a
+      // line's raw subtotal would hand back the invoice discount the customer
+      // never lost.
+      let saleValueRatio = 1;
       if (sale) {
         const priorRows = db
           .prepare(
@@ -89,6 +94,11 @@ export class ReturnsService {
           )
           .all(sale.id) as { variant_id: string; sale_item_id: string | null; qty: number }[];
         priorRows.forEach((row) => alreadyReturned.set(priceKey(row.variant_id, row.sale_item_id || undefined), row.qty));
+
+        const lineSubtotalSum = (
+          db.prepare('SELECT COALESCE(SUM(subtotal), 0) AS s FROM sale_items WHERE sale_id = ?').get(sale.id) as { s: number }
+        ).s;
+        saleValueRatio = lineSubtotalSum > 0 ? sale.net_total / lineSubtotalSum : 0;
       }
 
       const normalizedItems = input.items.map((item) => {
@@ -115,19 +125,20 @@ export class ReturnsService {
             );
           }
 
-          // Refund price is taken from the sale, never from the request. Cap at the
-          // effective price actually paid per unit on that line.
-          const effectiveUnitPaid = saleItem.quantity > 0 ? saleItem.subtotal / saleItem.quantity : saleItem.unit_price;
-          refundUnitPrice = Number(effectiveUnitPaid.toFixed(2));
+          // Refund price is taken from the sale, never from the request: the
+          // per-unit line subtotal scaled by the sale's invoice-discount/tax ratio.
+          const lineUnitSubtotal = saleItem.quantity > 0 ? saleItem.subtotal / saleItem.quantity : saleItem.unit_price;
+          refundUnitPrice = Number((lineUnitSubtotal * saleValueRatio).toFixed(2));
+          // Reverse COGS at the cost captured on the sale, not the current WAC.
+          return { ...item, refundUnitPrice, unitCost: Number(saleItem.unit_cost) };
         } else {
           // No-receipt return (manager-authorised): clamp to the current selling price.
-          const variant = db.prepare('SELECT selling_price FROM product_variants WHERE id = ?').get(item.variantId) as any;
+          const variant = db.prepare('SELECT selling_price, cost_price FROM product_variants WHERE id = ?').get(item.variantId) as any;
           if (!variant) throw new Error(`Product variant ${item.variantId} not found.`);
           if (!Number.isFinite(refundUnitPrice) || refundUnitPrice < 0) refundUnitPrice = variant.selling_price;
           refundUnitPrice = Math.min(refundUnitPrice, variant.selling_price);
+          return { ...item, refundUnitPrice, unitCost: Number(variant.cost_price) };
         }
-
-        return { ...item, refundUnitPrice };
       });
 
       const insertReturnItem = db.prepare(`
@@ -197,7 +208,7 @@ export class ReturnsService {
           item.variantId,
           item.quantity,
           item.refundUnitPrice,
-          variant.cost_price,
+          item.unitCost,
           itemSubtotal
         );
       }
@@ -262,14 +273,57 @@ export class ReturnsService {
         userId
       );
 
-      const returnedAmount = returnRecord.total_refund_amount;
+      const returnedAmount = Number(returnRecord.total_refund_amount);
 
-      // 2. Process New Sale portion
-      const newSaleRecord = PosService.checkout(input.newSaleDetails, userId);
-      const newSaleTotal = newSaleRecord.net_total;
+      // 2. Price the new cart, then settle ONLY the difference. The trade-in
+      //    value is applied as exchange credit; the customer tenders the rest.
+      const quote = PosService.quote(input.newSaleDetails);
+      const newSaleTotal = quote.netTotal;
+      const differenceAmount = calculateExchangeDifference(returnedAmount, newSaleTotal); // + => customer owes
+      const appliedCredit = Number(Math.min(returnedAmount, newSaleTotal).toFixed(2));
+      const customerOwes = Number(Math.max(0, differenceAmount).toFixed(2));
 
-      // 3. Compute difference
-      const differenceAmount = calculateExchangeDifference(returnedAmount, newSaleTotal);
+      let payments = (input.newSaleDetails.payments || []).filter((p) => p.method !== 'KHATA');
+      const suppliedTender = payments.reduce((s, p) => s + p.amount, 0);
+      if (customerOwes <= 0) {
+        payments = [];
+      } else if (payments.length === 0 || Math.abs(suppliedTender - customerOwes) > 0.01) {
+        // The customer only settles the difference. If the caller sent anything
+        // else (commonly the full new-sale price), normalise to one cash line.
+        payments = [{ method: 'CASH', amount: customerOwes }];
+      }
+
+      const newSaleRecord = PosService.checkout(
+        { ...input.newSaleDetails, payments, exchangeCredit: appliedCredit },
+        userId
+      );
+
+      // 3. Trade-in worth more than the new goods → store owes the customer the
+      //    balance; credit their Khata when we know who they are.
+      const overRefund = Number(Math.max(0, returnedAmount - newSaleTotal).toFixed(2));
+      const exchangeCustomerId = input.returnDetails.customerId || returnRecord.customer_id || null;
+      if (overRefund > 0 && exchangeCustomerId) {
+        const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(exchangeCustomerId) as any;
+        if (customer) {
+          const newBal = Number((customer.current_balance - overRefund).toFixed(2));
+          db.prepare('UPDATE customers SET current_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(newBal, exchangeCustomerId);
+          db.prepare(`
+            INSERT INTO customer_khata_ledger (
+              id, customer_id, entry_type, reference_id, debit, credit, running_balance, payment_method, notes, user_id
+            ) VALUES (?, ?, 'RETURN_REFUND_CREDIT', ?, 0.0, ?, ?, 'MANUAL', ?, ?)
+          `).run(
+            uuidv4(),
+            exchangeCustomerId,
+            returnRecord.return_number,
+            overRefund,
+            newBal,
+            `Exchange credit balance for ${returnRecord.return_number}`,
+            userId
+          );
+        }
+      }
+
       const exchangeId = uuidv4();
       const exchangeNumber = this.generateExchangeNumber(db);
 
@@ -285,8 +339,10 @@ export class ReturnsService {
         userId
       );
 
-      // Update sale status to EXCHANGED
-      db.prepare("UPDATE sales SET status = 'EXCHANGED' WHERE id = ?").run(newSaleRecord.id);
+      // Mark the original sale (not the fresh one) as exchanged.
+      if (returnRecord.original_sale_id) {
+        db.prepare("UPDATE sales SET status = 'EXCHANGED' WHERE id = ?").run(returnRecord.original_sale_id);
+      }
 
       AuditService.log({
         userId,
@@ -298,6 +354,8 @@ export class ReturnsService {
           returnedAmount,
           newSaleTotal,
           differenceAmount,
+          appliedCredit,
+          storeOwesCustomer: overRefund,
         },
       });
 
@@ -307,6 +365,8 @@ export class ReturnsService {
         returnDetails: returnRecord,
         newSaleDetails: newSaleRecord,
         differenceAmount,
+        appliedCredit,
+        storeOwesCustomer: overRefund,
       };
     });
   }

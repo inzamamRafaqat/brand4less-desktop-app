@@ -335,6 +335,10 @@ export function runMigrations(): void {
   // separate so paid_amount never books more than the sale was actually worth.
   addColumnIfMissing('sales', 'change_due', 'REAL NOT NULL DEFAULT 0.0');
 
+  // Value of goods traded in against this sale during an exchange. Counts toward
+  // payment sufficiency without being a cash/card tender line.
+  addColumnIfMissing('sales', 'exchange_credit', 'REAL NOT NULL DEFAULT 0.0');
+
   // ── Data migration: hash any legacy plaintext quick-POS PINs in place ──────
   // Older builds stored `pin_code` as cleartext (e.g. "1234"). Anyone who could
   // read the users table could then log in as that user. Upgrade them to bcrypt.

@@ -26,6 +26,11 @@ export interface PosCheckoutInput {
   payments: PosCheckoutPayment[];
   notes?: string;
   cashTendered?: number;
+  /**
+   * Value of goods traded in against this sale (exchanges only). Counts toward
+   * payment sufficiency but is never written as a cash/card tender line.
+   */
+  exchangeCredit?: number;
 }
 
 export class PosService {
@@ -76,7 +81,11 @@ export class PosService {
           throw new Error('Line discount must be a non-negative number.');
         }
       }
-      if (!Array.isArray(input.payments) || input.payments.length === 0) {
+      const exchangeCredit = Number(Math.max(0, input.exchangeCredit || 0).toFixed(2));
+      if (input.exchangeCredit !== undefined && (!Number.isFinite(input.exchangeCredit) || input.exchangeCredit < 0)) {
+        throw new Error('Exchange credit must be a non-negative number.');
+      }
+      if (!Array.isArray(input.payments) || (input.payments.length === 0 && exchangeCredit <= 0)) {
         throw new Error('At least one payment entry is required.');
       }
       for (const p of input.payments) {
@@ -141,16 +150,18 @@ export class PosService {
       const khataAmount = khataPayment ? khataPayment.amount : 0;
       const cashOrDigitalPaid = totalPaid - khataAmount;
 
-      if (totalPaid < calcResult.netTotal - 0.01) {
+      if (totalPaid + exchangeCredit < calcResult.netTotal - 0.01) {
         throw new Error(
-          `Insufficient payment amount. Total is ${calcResult.netTotal}, but provided payments total ${totalPaid}.`
+          `Insufficient payment amount. Total is ${calcResult.netTotal}, but provided payments total ${totalPaid}` +
+            (exchangeCredit > 0 ? ` plus ${exchangeCredit} exchange credit.` : '.')
         );
       }
 
-      // Overpayment is change owed back to the customer, not revenue. Only the
-      // portion of net_total not covered by Khata is booked as paid; anything
-      // tendered beyond that is recorded as change_due.
-      const nonKhataOwed = Number(Math.max(0, calcResult.netTotal - khataAmount).toFixed(2));
+      // Overpayment is change owed back to the customer, not revenue. Trade-in
+      // (exchange) credit covers net_total before any cash does; only the
+      // remaining non-Khata balance is booked as paid, and anything tendered
+      // beyond that is recorded as change_due.
+      const nonKhataOwed = Number(Math.max(0, calcResult.netTotal - khataAmount - exchangeCredit).toFixed(2));
       const recordedPaidAmount = Number(Math.min(cashOrDigitalPaid, nonKhataOwed).toFixed(2));
       const changeDue = Number(Math.max(0, cashOrDigitalPaid - nonKhataOwed).toFixed(2));
 
@@ -218,9 +229,9 @@ export class PosService {
       db.prepare(`
         INSERT INTO sales (
           id, invoice_number, customer_id, subtotal, discount_amount, tax_amount, net_total,
-          total_cost, total_profit, paid_amount, change_due, khata_amount, payment_method, payment_status,
+          total_cost, total_profit, paid_amount, change_due, exchange_credit, khata_amount, payment_method, payment_status,
           status, cashier_id, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
       `).run(
         saleId,
         invoiceNumber,
@@ -233,6 +244,7 @@ export class PosService {
         calcResult.totalProfit,
         recordedPaidAmount,
         changeDue,
+        exchangeCredit,
         khataAmount,
         paymentMethod,
         paymentStatus,
@@ -343,6 +355,41 @@ export class PosService {
       // 10. Fetch Complete Sale for Receipt
       return PosService.getSaleById(saleId);
     });
+  }
+
+  /**
+   * Prices a cart without persisting anything — used to settle exchange
+   * differences before running the real checkout.
+   */
+  static quote(input: PosCheckoutInput): ReturnType<typeof calculateSaleTotals> {
+    const db = getDb();
+    if (!input.items || input.items.length === 0) {
+      throw new Error('Cannot price an empty cart.');
+    }
+
+    const getVariant = db.prepare(
+      'SELECT cost_price FROM product_variants WHERE id = ? AND is_active = 1'
+    );
+
+    const rawCalcInputs: CartItemInput[] = input.items.map((item) => {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new Error('Each cart line must have a positive whole-number quantity.');
+      }
+      if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+        throw new Error('Each cart line must have a valid non-negative unit price.');
+      }
+      const v = getVariant.get(item.variantId) as { cost_price: number } | undefined;
+      if (!v) throw new Error(`Product variant ${item.variantId} not found or inactive.`);
+      return {
+        variantId: item.variantId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        unitCost: v.cost_price,
+        discountAmount: item.discountAmount || 0,
+      };
+    });
+
+    return calculateSaleTotals(rawCalcInputs, input.overallDiscount || 0, input.taxRatePercent || 0);
   }
 
   /**
@@ -510,6 +557,7 @@ export class PosService {
         netTotal: sale.net_total,
         paidAmount: sale.paid_amount,
         changeDue: sale.change_due || 0,
+        exchangeCredit: sale.exchange_credit || 0,
         khataAmount: sale.khata_amount,
         paymentMethod: sale.payment_method,
         paymentStatus: sale.payment_status,
