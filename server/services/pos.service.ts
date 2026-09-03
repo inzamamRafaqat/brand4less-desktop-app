@@ -4,6 +4,7 @@ import { calculateSaleTotals, CartItemInput } from '../domain/calculation.js';
 import { generateQrDataUrl } from '../domain/sku-generator.js';
 import { AuditService } from './audit.service.js';
 import { CONFIG } from '../config/index.js';
+import { localNow } from '../utils/time.js';
 
 export interface PosCheckoutPayment {
   method: 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'KHATA';
@@ -38,7 +39,7 @@ export class PosService {
    * Generates a sequential, readable invoice number e.g. INV-20260901-0001
    */
   private static generateInvoiceNumber(db: any): string {
-    const today = new Date();
+    const today = localNow();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `INV-${dateStr}-`;
 

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { PosService, PosCheckoutInput } from './pos.service.js';
 import { AuditService } from './audit.service.js';
 import { calculateExchangeDifference } from '../domain/calculation.js';
+import { localNow } from '../utils/time.js';
 
 export interface ReturnItemInput {
   saleItemId?: string;
@@ -27,7 +28,7 @@ export interface ProcessExchangeInput {
 
 export class ReturnsService {
   private static generateReturnNumber(db: any): string {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const today = localNow().toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `RET-${today}-`;
     // Order by the number itself, not created_at — same-second rows tie and the
     // "last" one is then arbitrary, producing duplicate sequences.
@@ -41,7 +42,7 @@ export class ReturnsService {
   }
 
   private static generateExchangeNumber(db: any): string {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const today = localNow().toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `EXC-${today}-`;
     const last = db.prepare(`SELECT exchange_number FROM exchanges WHERE exchange_number LIKE ? ORDER BY exchange_number DESC LIMIT 1`).get(`${prefix}%`) as { exchange_number: string } | undefined;
     let seq = 1;

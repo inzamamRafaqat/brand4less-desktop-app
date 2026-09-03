@@ -67,6 +67,9 @@ export const CONFIG = {
   STORE_ADDRESS: 'Shop # 12-14, Commercial Center, Main Boulevard',
   STORE_PHONE: '+92 300 1234567 / +92 321 7654321',
   CURRENCY: 'PKR',
+  // Store wall-clock offset from UTC, in hours. Pakistan is UTC+5, no DST.
+  // Day/month report boundaries are computed in this zone; rows stay UTC.
+  STORE_TZ_OFFSET_HOURS: parseInt(process.env.STORE_TZ_OFFSET_HOURS || '5', 10),
   DEFAULT_STAFF_MAX_DISCOUNT_PERCENT: 10,
   DEFAULT_MIN_STOCK_ALERT: 3,
   RECEIPT_RETURN_POLICY: 'Items can be exchanged within 7 days with original receipt and price tags intact. No cash refund on discounted items.',

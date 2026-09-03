@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { calculatePeriodNetProfit } from '../domain/calculation.js';
 import { CONFIG } from '../config/index.js';
+import { sqlLocal, localNow, localDateStr, localMonthStr, localYearStr, localDaysAgoStr } from '../utils/time.js';
 
 export class ReportService {
   /**
@@ -10,27 +11,27 @@ export class ReportService {
    */
   static getDashboardSummary(): any {
     const db = getDb();
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const monthPrefix = todayStr.slice(0, 7);
+    const todayStr = localDateStr();
+    const monthPrefix = localMonthStr();
 
-    // 1. Today's metrics
+    // 1. Today's metrics (store-local day)
     const todaySales = db.prepare(`
-      SELECT 
+      SELECT
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as gross_profit,
         COUNT(id) as transaction_count
       FROM sales
-      WHERE created_at >= ? AND status != 'CANCELLED'
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
     `).get(`${todayStr} 00:00:00`) as any;
 
     // 2. Month-to-date metrics
     const monthSales = db.prepare(`
-      SELECT 
+      SELECT
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as gross_profit,
         COUNT(id) as transaction_count
       FROM sales
-      WHERE created_at >= ? AND status != 'CANCELLED'
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
     `).get(`${monthPrefix}-01 00:00:00`) as any;
 
     const monthExpenses = db.prepare(`
@@ -42,7 +43,7 @@ export class ReportService {
     const monthReturns = db.prepare(`
       SELECT COALESCE(SUM(total_refund_amount), 0) as total_returns
       FROM returns
-      WHERE created_at >= ?
+      WHERE ${sqlLocal('created_at')} >= ?
     `).get(`${monthPrefix}-01 00:00:00`) as { total_returns: number };
 
     // Revenue / profit given back through returns in each window — the sale rows
@@ -54,7 +55,7 @@ export class ReportService {
           COALESCE(SUM(ri.quantity * ri.unit_cost), 0) as cogs
         FROM return_items ri
         JOIN returns r ON ri.return_id = r.id
-        WHERE r.created_at >= ?
+        WHERE ${sqlLocal('r.created_at')} >= ?
       `).get(fromTs) as { rev: number; cogs: number };
 
     const todayReversal = reversalSince(`${todayStr} 00:00:00`);
@@ -76,18 +77,18 @@ export class ReportService {
     const lowStockCount = db.prepare('SELECT COUNT(*) as count FROM product_variants WHERE stock_quantity <= min_stock_level AND is_active = 1').get() as { count: number };
     const totalInventoryValue = db.prepare('SELECT COALESCE(SUM(stock_quantity * cost_price), 0) as cost_val, COALESCE(SUM(stock_quantity * selling_price), 0) as retail_val FROM product_variants WHERE is_active = 1').get() as any;
 
-    // 4. Last 7 Days Daily Sales Trend
+    // 4. Last 7 Days Daily Sales Trend (store-local days)
     const last7Days = db.prepare(`
-      SELECT 
-        substr(created_at, 1, 10) as sale_date,
+      SELECT
+        substr(${sqlLocal('created_at')}, 1, 10) as sale_date,
         COALESCE(SUM(net_total), 0) as daily_sales,
         COALESCE(SUM(total_profit), 0) as daily_profit,
         COUNT(id) as transactions
       FROM sales
-      WHERE created_at >= date('now', '-6 days') AND status != 'CANCELLED'
-      GROUP BY substr(created_at, 1, 10)
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
+      GROUP BY substr(${sqlLocal('created_at')}, 1, 10)
       ORDER BY sale_date ASC
-    `).all();
+    `).all(`${localDaysAgoStr(6)} 00:00:00`);
 
     // 5. Top 5 Best Selling Products
     const topProducts = db.prepare(`
@@ -130,21 +131,23 @@ export class ReportService {
       name: s.party_name,
       initials: (s.party_name.split(' ').map((w: string) => w[0]).join('') || 'CU').slice(0, 2).toUpperCase(),
       item: s.item_title || 'Retail Apparel Item',
-      date: new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      date: new Date(
+        new Date(String(s.created_at).replace(' ', 'T') + 'Z').getTime() + CONFIG.STORE_TZ_OFFSET_HOURS * 3_600_000
+      ).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
       type: s.payment_method === 'KHATA' ? 'Khata' : 'Sale',
       amount: `PKR ${Number(s.amount).toLocaleString()}`,
     }));
 
-    // 7. Real 12-Month Sales Trend Data
-    const currentYear = new Date().getFullYear().toString();
+    // 7. Real 12-Month Sales Trend Data (store-local calendar)
+    const currentYear = localYearStr();
     const monthlySalesTrend = db.prepare(`
-      SELECT 
-        strftime('%m', created_at) as month_num,
+      SELECT
+        strftime('%m', ${sqlLocal('created_at')}) as month_num,
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as total_profit
       FROM sales
-      WHERE strftime('%Y', created_at) = ? AND status != 'CANCELLED'
-      GROUP BY strftime('%m', created_at)
+      WHERE strftime('%Y', ${sqlLocal('created_at')}) = ? AND status != 'CANCELLED'
+      GROUP BY strftime('%m', ${sqlLocal('created_at')})
       ORDER BY month_num ASC
     `).all(currentYear) as any[];
 
@@ -205,19 +208,19 @@ export class ReportService {
     const retParams: any[] = [];
 
     if (startDate) {
-      salesWhere += ' AND s.created_at >= ?';
+      salesWhere += ` AND ${sqlLocal('s.created_at')} >= ?`;
       salesParams.push(`${startDate} 00:00:00`);
       expWhere += ' AND e.expense_date >= ?';
       expParams.push(startDate);
-      retWhere += ' AND r.created_at >= ?';
+      retWhere += ` AND ${sqlLocal('r.created_at')} >= ?`;
       retParams.push(`${startDate} 00:00:00`);
     }
     if (endDate) {
-      salesWhere += ' AND s.created_at <= ?';
+      salesWhere += ` AND ${sqlLocal('s.created_at')} <= ?`;
       salesParams.push(`${endDate} 23:59:59`);
       expWhere += ' AND e.expense_date <= ?';
       expParams.push(endDate);
-      retWhere += ' AND r.created_at <= ?';
+      retWhere += ` AND ${sqlLocal('r.created_at')} <= ?`;
       retParams.push(`${endDate} 23:59:59`);
     }
 
@@ -328,11 +331,11 @@ export class ReportService {
     const params: any[] = [];
 
     if (filters?.startDate) {
-      whereClause += ' AND s.created_at >= ?';
+      whereClause += ` AND ${sqlLocal('s.created_at')} >= ?`;
       params.push(`${filters.startDate} 00:00:00`);
     }
     if (filters?.endDate) {
-      whereClause += ' AND s.created_at <= ?';
+      whereClause += ` AND ${sqlLocal('s.created_at')} <= ?`;
       params.push(`${filters.endDate} 23:59:59`);
     }
     if (filters?.paymentMethod) {
@@ -397,11 +400,11 @@ export class ReportService {
       params.push(filters.movementType);
     }
     if (filters?.startDate) {
-      whereClause += ' AND m.created_at >= ?';
+      whereClause += ` AND ${sqlLocal('m.created_at')} >= ?`;
       params.push(`${filters.startDate} 00:00:00`);
     }
     if (filters?.endDate) {
-      whereClause += ' AND m.created_at <= ?';
+      whereClause += ` AND ${sqlLocal('m.created_at')} <= ?`;
       params.push(`${filters.endDate} 23:59:59`);
     }
 

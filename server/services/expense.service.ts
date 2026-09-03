@@ -1,6 +1,7 @@
 import { getDb, runTransaction } from '../database/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from './audit.service.js';
+import { localDateStr } from '../utils/time.js';
 
 export interface CreateExpenseInput {
   categoryId?: string;
@@ -175,14 +176,14 @@ export class ExpenseService {
 
     db.prepare(`
       INSERT INTO expenses (id, category_id, title, amount, payment_method, expense_date, receipt_image_url, notes, user_id)
-      VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       catId,
       title.trim(),
       input.amount,
       input.paymentMethod || 'CASH',
-      input.expenseDate || null,
+      input.expenseDate || localDateStr(), // store-local day, not UTC
       input.receiptImageUrl || null,
       input.notes || input.description || null,
       userId

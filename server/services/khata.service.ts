@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { AuditService } from './audit.service.js';
 import { CONFIG } from '../config/index.js';
+import { sqlLocal } from '../utils/time.js';
 
 export interface CreateCustomerInput {
   name: string;
@@ -178,11 +179,11 @@ export class KhataService {
     const params: any[] = [customerId];
 
     if (startTs) {
-      query += ' AND l.created_at >= ?';
+      query += ` AND ${sqlLocal('l.created_at')} >= ?`;
       params.push(startTs);
     }
     if (endTs) {
-      query += ' AND l.created_at <= ?';
+      query += ` AND ${sqlLocal('l.created_at')} <= ?`;
       params.push(endTs);
     }
 
@@ -194,7 +195,7 @@ export class KhataService {
       ? (db.prepare(`
           SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as bal
           FROM customer_khata_ledger
-          WHERE customer_id = ? AND created_at < ?
+          WHERE customer_id = ? AND ${sqlLocal('created_at')} < ?
         `).get(customerId, startTs) as { bal: number }).bal
       : 0;
     const openingBalance = Number(opening.toFixed(2));
@@ -206,8 +207,8 @@ export class KhataService {
         COALESCE(SUM(credit), 0) as total_credit
       FROM customer_khata_ledger
       WHERE customer_id = ?
-        ${startTs ? 'AND created_at >= ?' : ''}
-        ${endTs ? 'AND created_at <= ?' : ''}
+        ${startTs ? `AND ${sqlLocal('created_at')} >= ?` : ''}
+        ${endTs ? `AND ${sqlLocal('created_at')} <= ?` : ''}
     `).get(...[customerId, startTs, endTs].filter((v) => v !== null)) as {
       total_debit: number;
       total_credit: number;
