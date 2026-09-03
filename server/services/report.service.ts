@@ -55,6 +55,7 @@ export class ReportService {
     // 3. Operational Balances
     const receivables = db.prepare('SELECT COALESCE(SUM(current_balance), 0) as total FROM customers WHERE current_balance > 0').get() as { total: number };
     const payables = db.prepare('SELECT COALESCE(SUM(current_payable), 0) as total FROM suppliers WHERE current_payable > 0').get() as { total: number };
+    const supplierAdvances = db.prepare('SELECT COALESCE(-SUM(current_payable), 0) as total FROM suppliers WHERE current_payable < 0').get() as { total: number };
     const lowStockCount = db.prepare('SELECT COUNT(*) as count FROM product_variants WHERE stock_quantity <= min_stock_level AND is_active = 1').get() as { count: number };
     const totalInventoryValue = db.prepare('SELECT COALESCE(SUM(stock_quantity * cost_price), 0) as cost_val, COALESCE(SUM(stock_quantity * selling_price), 0) as retail_val FROM product_variants WHERE is_active = 1').get() as any;
 
@@ -161,6 +162,7 @@ export class ReportService {
       operational: {
         customerReceivables: receivables.total,
         supplierPayables: payables.total,
+        supplierAdvances: supplierAdvances.total,
         lowStockCount: lowStockCount.count,
         inventoryCostValue: totalInventoryValue.cost_val,
         inventoryRetailValue: totalInventoryValue.retail_val,

@@ -145,8 +145,18 @@ export class SupplierService {
         itemsSubtotal += item.quantity * item.unitCost;
       });
 
-      const totalAmount = Math.max(0, itemsSubtotal - discount);
-      const balanceDue = Math.max(0, totalAmount - paidAmount);
+      const totalAmount = Number(Math.max(0, itemsSubtotal - discount).toFixed(2));
+
+      // Paying more than the bill at purchase time is a data-entry error: the
+      // excess would otherwise be recorded as a payment that moves no balance,
+      // desyncing the ledger from current_payable.
+      if (paidAmount > totalAmount + 0.01) {
+        throw new Error(
+          `Paid amount (${paidAmount}) exceeds the purchase total (${totalAmount}). Enter at most the bill amount.`
+        );
+      }
+
+      const balanceDue = Number(Math.max(0, totalAmount - paidAmount).toFixed(2));
 
       let paymentStatus = 'UNPAID';
       if (paidAmount >= totalAmount && totalAmount > 0) {
@@ -227,8 +237,10 @@ export class SupplierService {
         );
       }
 
-      // 3. Update Supplier Payable & Ledger
-      const newPayable = supplier.current_payable + balanceDue;
+      // 3. Update Supplier Payable & Ledger — one running value, applied step by step.
+      const previousPayable = Number(supplier.current_payable.toFixed(2));
+      const payableAfterBill = Number((previousPayable + totalAmount).toFixed(2));
+      const newPayable = Number((payableAfterBill - paidAmount).toFixed(2)); // == previousPayable + balanceDue
       db.prepare('UPDATE suppliers SET current_payable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
         .run(newPayable, input.supplierId);
 
@@ -242,7 +254,7 @@ export class SupplierService {
         input.supplierId,
         invoiceNo,
         totalAmount,
-        supplier.current_payable + totalAmount,
+        payableAfterBill,
         input.paymentMethod || 'MANUAL',
         `Purchase Bill ${invoiceNo}`,
         userId
@@ -398,8 +410,18 @@ export class SupplierService {
       const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(supplierId) as any;
       if (!supplier) throw new Error('Supplier not found');
 
-      const previousPayable = supplier.current_payable;
-      const newPayable = previousPayable - amount;
+      const previousPayable = Number(supplier.current_payable.toFixed(2));
+
+      // Never let a payment drive the payable negative — an untracked "advance"
+      // would vanish from the payables KPI (which filters current_payable > 0).
+      if (amount > previousPayable + 0.01) {
+        throw new Error(
+          `Payment (${amount}) exceeds the outstanding payable (${previousPayable}) for ${supplier.name}. ` +
+            `Record at most ${previousPayable}.`
+        );
+      }
+
+      const newPayable = Number((previousPayable - amount).toFixed(2));
       const receiptNo = `SUP-PAY-${Date.now().toString().slice(-6)}`;
 
       // Update supplier balance

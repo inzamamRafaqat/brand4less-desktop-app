@@ -164,8 +164,11 @@ export class KhataService {
     const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId) as any;
     if (!customer) throw new Error('Customer not found');
 
+    const startTs = startDate ? `${startDate} 00:00:00` : null;
+    const endTs = endDate ? `${endDate} 23:59:59` : null;
+
     let query = `
-      SELECT 
+      SELECT
         l.*,
         u.full_name as user_name
       FROM customer_khata_ledger l
@@ -174,31 +177,54 @@ export class KhataService {
     `;
     const params: any[] = [customerId];
 
-    if (startDate) {
+    if (startTs) {
       query += ' AND l.created_at >= ?';
-      params.push(`${startDate} 00:00:00`);
+      params.push(startTs);
     }
-    if (endDate) {
+    if (endTs) {
       query += ' AND l.created_at <= ?';
-      params.push(`${endDate} 23:59:59`);
+      params.push(endTs);
     }
 
     query += ' ORDER BY l.created_at ASC';
     const entries = db.prepare(query).all(...params);
 
-    const totals = db.prepare(`
-      SELECT 
+    // Opening balance = net of every entry strictly before the window start.
+    const opening = startTs
+      ? (db.prepare(`
+          SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as bal
+          FROM customer_khata_ledger
+          WHERE customer_id = ? AND created_at < ?
+        `).get(customerId, startTs) as { bal: number }).bal
+      : 0;
+    const openingBalance = Number(opening.toFixed(2));
+
+    // Period totals cover exactly the same rows as `entries`.
+    const periodTotals = db.prepare(`
+      SELECT
         COALESCE(SUM(debit), 0) as total_debit,
         COALESCE(SUM(credit), 0) as total_credit
       FROM customer_khata_ledger
       WHERE customer_id = ?
-    `).get(customerId) as { total_debit: number; total_credit: number };
+        ${startTs ? 'AND created_at >= ?' : ''}
+        ${endTs ? 'AND created_at <= ?' : ''}
+    `).get(...[customerId, startTs, endTs].filter((v) => v !== null)) as {
+      total_debit: number;
+      total_credit: number;
+    };
+
+    const closingBalance = Number(
+      (openingBalance + periodTotals.total_debit - periodTotals.total_credit).toFixed(2)
+    );
 
     return {
       customer,
       entries,
-      totalDebit: totals.total_debit,
-      totalCredit: totals.total_credit,
+      openingBalance,
+      totalDebit: periodTotals.total_debit,
+      totalCredit: periodTotals.total_credit,
+      closingBalance,
+      // `closingBalance` equals this whenever the window has no end date.
       currentBalance: customer.current_balance,
     };
   }
@@ -298,6 +324,20 @@ export class KhataService {
       fgColor: { argb: 'FF15803D' }, // Brand green
     };
 
+    // Opening balance row so the statement reconciles: opening + debits − credits = closing.
+    const openingRow = worksheet.addRow({
+      date: startDate ? `OPENING BALANCE (as of ${startDate})` : 'OPENING BALANCE',
+      type: '',
+      ref: '',
+      debit: '',
+      credit: '',
+      balance: data.openingBalance,
+      method: '',
+      notes: '',
+      user: '',
+    });
+    openingRow.font = { bold: true };
+
     data.entries.forEach((e: any) => {
       worksheet.addRow({
         date: e.created_at,
@@ -312,14 +352,14 @@ export class KhataService {
       });
     });
 
-    // Summary Row
+    // Summary Row — period movement and the resulting closing balance.
     const summaryRow = worksheet.addRow({
-      date: 'CURRENT BALANCE',
+      date: 'PERIOD TOTALS / CLOSING BALANCE',
       type: '',
       ref: '',
       debit: data.totalDebit,
       credit: data.totalCredit,
-      balance: data.currentBalance,
+      balance: data.closingBalance,
       method: '',
       notes: '',
       user: '',
@@ -370,6 +410,14 @@ export class KhataService {
       doc.font('Helvetica');
 
       let yPos = doc.y;
+
+      // Opening balance line
+      doc.font('Helvetica-Bold');
+      doc.text(startDate ? `Opening Balance (as of ${startDate})` : 'Opening Balance', 40, yPos);
+      doc.text(data.openingBalance.toFixed(0), 460, yPos, { align: 'right', width: 70 });
+      doc.font('Helvetica');
+      yPos += 20;
+
       data.entries.forEach((e: any) => {
         if (yPos > 720) {
           doc.addPage();
@@ -390,9 +438,9 @@ export class KhataService {
       doc.moveDown();
       doc.y = yPos + 10;
       doc.font('Helvetica-Bold');
-      doc.text(`Total Debit: ${CONFIG.CURRENCY} ${data.totalDebit.toLocaleString()}`, 40);
-      doc.text(`Total Credit: ${CONFIG.CURRENCY} ${data.totalCredit.toLocaleString()}`, 220);
-      doc.text(`Net Balance: ${CONFIG.CURRENCY} ${data.currentBalance.toLocaleString()}`, 400);
+      doc.text(`Period Debit: ${CONFIG.CURRENCY} ${data.totalDebit.toLocaleString()}`, 40);
+      doc.text(`Period Credit: ${CONFIG.CURRENCY} ${data.totalCredit.toLocaleString()}`, 220);
+      doc.text(`Closing Balance: ${CONFIG.CURRENCY} ${data.closingBalance.toLocaleString()}`, 400);
 
       doc.end();
     });

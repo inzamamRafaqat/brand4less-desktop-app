@@ -147,6 +147,13 @@ export class PosService {
         );
       }
 
+      // Overpayment is change owed back to the customer, not revenue. Only the
+      // portion of net_total not covered by Khata is booked as paid; anything
+      // tendered beyond that is recorded as change_due.
+      const nonKhataOwed = Number(Math.max(0, calcResult.netTotal - khataAmount).toFixed(2));
+      const recordedPaidAmount = Number(Math.min(cashOrDigitalPaid, nonKhataOwed).toFixed(2));
+      const changeDue = Number(Math.max(0, cashOrDigitalPaid - nonKhataOwed).toFixed(2));
+
       // Determine main payment method classification
       let paymentMethod = 'CASH';
       if (input.payments.length > 1) {
@@ -173,9 +180,11 @@ export class PosService {
           effectiveCustomerId = customer.id;
         } else if (input.customerName?.trim()) {
           effectiveCustomerId = uuidv4();
+          // New customers start with no Khata credit line; a limit must be set
+          // deliberately before they can buy on credit.
           db.prepare(`
             INSERT INTO customers (id, name, phone, current_balance, credit_limit)
-            VALUES (?, ?, ?, 0.0, 50000.0)
+            VALUES (?, ?, ?, 0.0, 0.0)
           `).run(effectiveCustomerId, input.customerName.trim(), phone);
           customer = { id: effectiveCustomerId, name: input.customerName.trim(), phone, current_balance: 0 };
         }
@@ -186,13 +195,19 @@ export class PosService {
           throw new Error('Customer profile must be selected to charge an amount to Khata (Credit).');
         }
 
-        if (customer.credit_limit > 0) {
-          const newBal = customer.current_balance + khataAmount;
-          if (newBal > customer.credit_limit) {
-            throw new Error(
-              `Credit limit exceeded for ${customer.name}. Max limit: ${customer.credit_limit}, Current: ${customer.current_balance}, Requested Credit: ${khataAmount}`
-            );
-          }
+        // A credit limit of 0 (or unset) means this customer is not approved for
+        // Khata — it must never be read as "unlimited".
+        if (!(customer.credit_limit > 0)) {
+          throw new Error(
+            `${customer.name} has no Khata credit limit set. Set a credit limit on the customer before selling on credit.`
+          );
+        }
+
+        const newBal = customer.current_balance + khataAmount;
+        if (newBal > customer.credit_limit) {
+          throw new Error(
+            `Credit limit exceeded for ${customer.name}. Max limit: ${customer.credit_limit}, Current: ${customer.current_balance}, Requested Credit: ${khataAmount}`
+          );
         }
       }
 
@@ -203,9 +218,9 @@ export class PosService {
       db.prepare(`
         INSERT INTO sales (
           id, invoice_number, customer_id, subtotal, discount_amount, tax_amount, net_total,
-          total_cost, total_profit, paid_amount, khata_amount, payment_method, payment_status,
+          total_cost, total_profit, paid_amount, change_due, khata_amount, payment_method, payment_status,
           status, cashier_id, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
       `).run(
         saleId,
         invoiceNumber,
@@ -216,7 +231,8 @@ export class PosService {
         calcResult.netTotal,
         calcResult.totalCost,
         calcResult.totalProfit,
-        cashOrDigitalPaid,
+        recordedPaidAmount,
+        changeDue,
         khataAmount,
         paymentMethod,
         paymentStatus,
@@ -493,6 +509,7 @@ export class PosService {
         taxAmount: sale.tax_amount,
         netTotal: sale.net_total,
         paidAmount: sale.paid_amount,
+        changeDue: sale.change_due || 0,
         khataAmount: sale.khata_amount,
         paymentMethod: sale.payment_method,
         paymentStatus: sale.payment_status,

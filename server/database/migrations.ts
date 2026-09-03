@@ -321,6 +321,20 @@ export function runMigrations(): void {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
   `);
 
+  // ── Additive column migrations for already-provisioned databases ───────────
+  // CREATE TABLE IF NOT EXISTS above never alters an existing table, so columns
+  // added after a shop is live must be back-filled here.
+  const addColumnIfMissing = (table: string, column: string, definition: string): void => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  };
+
+  // Cash handed back to the customer when tender exceeds the amount owed. Kept
+  // separate so paid_amount never books more than the sale was actually worth.
+  addColumnIfMissing('sales', 'change_due', 'REAL NOT NULL DEFAULT 0.0');
+
   // ── Data migration: hash any legacy plaintext quick-POS PINs in place ──────
   // Older builds stored `pin_code` as cleartext (e.g. "1234"). Anyone who could
   // read the users table could then log in as that user. Upgrade them to bcrypt.
