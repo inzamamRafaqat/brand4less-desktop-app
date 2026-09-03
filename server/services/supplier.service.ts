@@ -206,6 +206,12 @@ export class SupplierService {
         ) VALUES (?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
       `);
 
+      // An invoice-level discount lowers the landed cost of every unit received.
+      // purchase_items stay at the billed (gross) unit cost to match the
+      // supplier's invoice; only the inventory cost (WAC) and the stock-movement
+      // cost use the discounted landed cost.
+      const discountFactor = itemsSubtotal > 0 ? Math.max(0, 1 - discount / itemsSubtotal) : 1;
+
       for (const item of input.items) {
         const variant = db.prepare('SELECT * FROM product_variants WHERE id = ?').get(item.variantId) as any;
         if (!variant) throw new Error(`Variant ${item.variantId} not found`);
@@ -213,23 +219,25 @@ export class SupplierService {
         const subtotal = item.quantity * item.unitCost;
         insertPurchaseItem.run(uuidv4(), purchaseId, item.variantId, item.quantity, item.unitCost, subtotal);
 
-        // Recompute Weighted Average Cost (WAC)
+        const landedUnitCost = Number((item.unitCost * discountFactor).toFixed(2));
+
+        // Recompute Weighted Average Cost (WAC) off the landed cost.
         const newWacCost = calculateMovingWeightedAverageCost(
           variant.stock_quantity,
           variant.cost_price,
           item.quantity,
-          item.unitCost
+          landedUnitCost
         );
 
         const newStock = variant.stock_quantity + item.quantity;
         updateVariantWac.run(item.quantity, newWacCost, item.variantId);
 
-        // Record stock movement
+        // Record stock movement at the landed cost.
         insertMovement.run(
           uuidv4(),
           item.variantId,
           item.quantity,
-          item.unitCost,
+          landedUnitCost,
           newStock,
           invoiceNo,
           `Purchase ${invoiceNo} (New WAC Cost: ${newWacCost})`,

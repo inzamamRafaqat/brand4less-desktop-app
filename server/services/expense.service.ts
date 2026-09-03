@@ -355,15 +355,21 @@ export class ExpenseService {
 
       const expenseId = uuidv4();
       const expenseTitle = `Salary Disbursement: ${disb.employee_name} (${disb.month_year})`;
+      // Date the expense to the payroll month it settles, not the approval day,
+      // so month-by-month P&L attributes salary to the right period.
+      const expenseDate = /^\d{4}-(0[1-9]|1[0-2])$/.test(disb.month_year)
+        ? `${disb.month_year}-01`
+        : new Date().toISOString().slice(0, 10);
       db.prepare(`
         INSERT INTO expenses (id, category_id, title, amount, payment_method, expense_date, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         expenseId,
         salaryCat.id,
         expenseTitle,
         netSalary,
         paymentMethod,
+        expenseDate,
         `Auto-posted salary for ${disb.month_year}. Base: PKR ${disb.base_salary}, Bonus: PKR ${bonus}, Deductions: PKR ${deductions}`,
         userId
       );

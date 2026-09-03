@@ -506,24 +506,33 @@ export class ProductService {
         userId
       );
 
-      // If damaged write-off, record to expense for accurate profit
+      // If damaged write-off, book the lost cost to an expense so profit stays
+      // accurate. The category is matched loosely and created if missing —
+      // renaming it must never make write-offs silently skip the P&L.
       if (movementType === 'DAMAGED_WRITE_OFF' && quantityChange < 0) {
-        const damageCat = db.prepare("SELECT id FROM expense_categories WHERE name LIKE '%Damage%' OR name LIKE '%Shrinkage%'").get() as { id: string } | undefined;
-        if (damageCat) {
-          const writeOffCost = Math.abs(quantityChange) * variant.cost_price;
-          if (writeOffCost > 0) {
-            db.prepare(`
-              INSERT INTO expenses (id, category_id, title, amount, payment_method, notes, user_id)
-              VALUES (?, ?, ?, ?, 'CASH', ?, ?)
-            `).run(
-              uuidv4(),
-              damageCat.id,
-              `Damaged Stock Write-off: ${variant.sku} (Qty: ${Math.abs(quantityChange)})`,
-              writeOffCost,
-              notes,
-              userId
-            );
+        const writeOffCost = Number((Math.abs(quantityChange) * variant.cost_price).toFixed(2));
+        if (writeOffCost > 0) {
+          let damageCat = db
+            .prepare("SELECT id FROM expense_categories WHERE name LIKE '%Damage%' OR name LIKE '%Shrinkage%' OR name LIKE '%Wastage%' OR name LIKE '%Write-off%'")
+            .get() as { id: string } | undefined;
+          if (!damageCat) {
+            const catId = uuidv4();
+            db.prepare(
+              "INSERT INTO expense_categories (id, name, description) VALUES (?, 'Inventory Shrinkage & Damage', 'Damaged or lost stock cost write-offs')"
+            ).run(catId);
+            damageCat = { id: catId };
           }
+          db.prepare(`
+            INSERT INTO expenses (id, category_id, title, amount, payment_method, notes, user_id)
+            VALUES (?, ?, ?, ?, 'CASH', ?, ?)
+          `).run(
+            uuidv4(),
+            damageCat.id,
+            `Damaged Stock Write-off: ${variant.sku} (Qty: ${Math.abs(quantityChange)})`,
+            writeOffCost,
+            notes,
+            userId
+          );
         }
       }
 

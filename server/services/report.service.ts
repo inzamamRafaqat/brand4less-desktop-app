@@ -274,8 +274,13 @@ export class ReportService {
     const cogs = Number((salesTotals.total_cogs - returnsCogs).toFixed(2));
     const grossProfit = Number((salesTotals.gross_profit - returnsProfitReversal).toFixed(2));
     const netOperatingProfit = Number((grossProfit - totalExpenses).toFixed(2));
-    const grossMarginPercent = netSales > 0 ? Number(((grossProfit / netSales) * 100).toFixed(1)) : 0;
-    const netMarginPercent = netSales > 0 ? Number(((netOperatingProfit / netSales) * 100).toFixed(1)) : 0;
+
+    // Margin % is measured against the shop's own revenue, i.e. net of sales
+    // tax collected on behalf of the government. (Returns' tax share is not
+    // stripped here — immaterial, and zero when no tax is charged.)
+    const revenueExTax = Math.max(0, Number((netSales - salesTotals.total_tax).toFixed(2)));
+    const grossMarginPercent = revenueExTax > 0 ? Number(((grossProfit / revenueExTax) * 100).toFixed(1)) : 0;
+    const netMarginPercent = revenueExTax > 0 ? Number(((netOperatingProfit / revenueExTax) * 100).toFixed(1)) : 0;
 
     return {
       period: { startDate: startDate || 'All Time', endDate: endDate || 'Current' },
