@@ -10,6 +10,9 @@ export default mergeConfig(
     test: {
       fileParallelism: false,
       testTimeout: 20000,
+      env: {
+        DB_PATH: './data/test.db',
+      },
     },
   })
 );

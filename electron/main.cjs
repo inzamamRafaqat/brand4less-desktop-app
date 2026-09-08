@@ -7,8 +7,8 @@ const { fork, spawn } = require('child_process');
 let mainWindow = null;
 let serverProcess = null;
 
-const isDev = process.env.NODE_ENV !== 'production';
-const API_PORT = parseInt(process.env.PORT || '4000', 10);
+const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
+const API_PORT = parseInt(process.env.PORT || '4890', 10);
 const API_HOST = process.env.HOST || '127.0.0.1';
 const API_ORIGIN = `http://${API_HOST}:${API_PORT}`;
 
@@ -38,7 +38,10 @@ function startBackend() {
   // Dev is expected to run `npm run dev:server` (tsx watch) separately.
   if (isDev) return Promise.resolve();
 
-  const compiled = path.join(__dirname, '../dist-server/server.js');
+  const baseDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'app')
+    : path.join(__dirname, '..');
+  const compiled = path.join(baseDir, 'dist-server', 'server.js');
   const userDataPath = app.getPath('userData');
   const env = {
     ...process.env,
@@ -46,26 +49,42 @@ function startBackend() {
     PORT: String(API_PORT),
     HOST: API_HOST,
     DATA_DIR: process.env.DATA_DIR || path.join(userDataPath, 'data'),
-    ELECTRON_RUN_AS_NODE: '1',
   };
 
+  if (!fs.existsSync(userDataPath)) {
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+  const logFile = path.join(userDataPath, 'backend.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  const bundledNode = path.join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
+  const nodeBin = (app.isPackaged && fs.existsSync(bundledNode))
+    ? bundledNode
+    : (process.platform === 'win32' ? 'node.exe' : 'node');
+
   if (fs.existsSync(compiled)) {
-    serverProcess = fork(compiled, [], { env, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+    serverProcess = spawn(nodeBin, [compiled], {
+      cwd: baseDir,
+      env,
+      stdio: ['ignore', logStream, logStream],
+      shell: false,
+      windowsHide: true,
+    });
   } else {
-    // Fallback: run the TypeScript entry directly via the locally-installed tsx.
+    // Fallback: run the TypeScript entry directly via the locally-installed tsx if available
     const tsxBin = path.join(
-      __dirname,
-      '..',
+      baseDir,
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
     );
-    if (!fs.existsSync(tsxBin)) {
+    const source = path.join(baseDir, 'server', 'server.ts');
+    if (!fs.existsSync(tsxBin) || !fs.existsSync(source)) {
       return Promise.reject(
-        new Error('No backend build found. Run "npm run build:server" (or "npm run build") before starting in production.')
+        new Error(`No backend build found at ${compiled}. Run "npm run build" before starting in production.`)
       );
     }
-    serverProcess = spawn(tsxBin, [source], { env, stdio: ['ignore', 'inherit', 'inherit'], shell: false });
+    serverProcess = spawn(tsxBin, [source], { cwd: baseDir, env, stdio: ['ignore', logStream, logStream], shell: false, windowsHide: true });
   }
 
   serverProcess.on('exit', (code) => {
@@ -82,7 +101,11 @@ function startBackend() {
 function stopBackend() {
   if (serverProcess) {
     try {
-      serverProcess.kill();
+      if (process.platform === 'win32' && serverProcess.pid) {
+        spawn('taskkill', ['/pid', String(serverProcess.pid), '/f', '/t'], { windowsHide: true });
+      } else {
+        serverProcess.kill();
+      }
     } catch (_) {
       /* noop */
     }

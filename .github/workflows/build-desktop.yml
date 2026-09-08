@@ -38,6 +38,11 @@ jobs:
       - name: Compile Application (Frontend & Server)
         run: npm run build
 
+      - name: Prepare Bundled Node Runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path extra\bin
+          Copy-Item (Get-Command node).Source extra\bin\node.exe
+
       - name: Package Windows Installer (.exe)
         run: npx electron-builder --win nsis
         env:

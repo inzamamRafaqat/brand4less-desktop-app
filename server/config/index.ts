@@ -53,7 +53,7 @@ function resolveJwtSecret(): string {
 }
 
 export const CONFIG = {
-  PORT: parseInt(process.env.PORT || '4000', 10),
+  PORT: parseInt(process.env.PORT || '4890', 10),
   // Bind to loopback only by default so the POS/API surface is not exposed to the LAN.
   HOST: process.env.HOST || '127.0.0.1',
   JWT_SECRET: resolveJwtSecret(),
