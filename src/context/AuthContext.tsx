@@ -6,6 +6,7 @@ export interface User {
   username: string;
   fullName: string;
   role: 'ADMIN' | 'MANAGER' | 'STAFF';
+  mustChangePassword?: boolean;
 }
 
 interface AuthContextType {
@@ -16,6 +17,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<void>;
   loginWithPin: (pin: string) => Promise<void>;
   verifyAdminPin: (pin: string) => Promise<boolean>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
   hasRole: (...roles: string[]) => boolean;
 }
@@ -82,6 +84,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    const res = await api.post('/auth/change-password', { currentPassword, newPassword });
+    if (res.success && user) {
+      const updatedUser = { ...user, mustChangePassword: false };
+      setUser(updatedUser);
+      localStorage.setItem('brand4less_user', JSON.stringify(updatedUser));
+    }
+  };
+
   const logout = () => {
     setUser(null);
     setToken(null);
@@ -104,6 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         loginWithPin,
         verifyAdminPin,
+        changePassword,
         logout,
         hasRole,
       }}

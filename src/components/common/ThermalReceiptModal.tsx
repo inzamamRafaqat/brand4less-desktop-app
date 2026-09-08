@@ -23,27 +23,41 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
 
   useEffect(() => {
     const fetchPrinters = async () => {
-      try {
-        const res = await api.get('/hardware/printers');
-        if (res.printers && res.printers.length > 0) {
-          setPrinters(res.printers);
-          // Auto-select DTS or POS thermal printer if found
-          const dts = res.printers.find(
-            (p: any) =>
-              p.name.toLowerCase().includes('dts') ||
-              p.name.toLowerCase().includes('pos') ||
-              p.name.toLowerCase().includes('thermal') ||
-              p.name.toLowerCase().includes('receipt') ||
-              p.name.toLowerCase().includes('80')
-          );
-          if (dts) {
-            setSelectedPrinter(dts.name);
-          } else {
-            setSelectedPrinter(res.printers[0].name);
+      let detected: any[] = [];
+      if (window.electronAPI?.getPrinters) {
+        try {
+          const list = await window.electronAPI.getPrinters();
+          if (list && list.length > 0) {
+            detected = list;
           }
+        } catch (e) {
+          // ignore
         }
-      } catch (e) {
-        // ignore
+      }
+
+      if (detected.length === 0) {
+        try {
+          const res = await api.get('/hardware/printers');
+          if (res.printers && res.printers.length > 0) {
+            detected = res.printers;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (detected.length > 0) {
+        setPrinters(detected);
+        const dts = detected.find(
+          (p: any) =>
+            p.name.toLowerCase().includes('dts') ||
+            p.name.toLowerCase().includes('pos') ||
+            p.name.toLowerCase().includes('thermal') ||
+            p.name.toLowerCase().includes('receipt') ||
+            p.name.toLowerCase().includes('80') ||
+            p.isDefault
+        );
+        setSelectedPrinter(dts ? dts.name : detected[0].name);
       }
     };
     fetchPrinters();
@@ -76,11 +90,141 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   const returnPolicy = receiptData?.returnPolicy || 'Items can be exchanged within 7 days with original receipt. No cash refund on sale items.';
 
   /**
-   * Direct Raw ESC/POS Print to DTS Brand Thermal Printer
+   * Generates Clean Receipt HTML Document
+   */
+  const generateReceiptHtml = (withAutoPrint = false) => `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Receipt - ${invoiceNumber}</title>
+        <meta charset="utf-8" />
+        <style>
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
+          body {
+            font-family: "Courier New", Courier, monospace;
+            width: 72mm;
+            margin: 0 auto;
+            padding: 4mm 2mm;
+            font-size: 11px;
+            line-height: 1.3;
+            color: #000;
+            background: #fff;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .header-title { font-size: 15px; font-weight: 900; letter-spacing: 1px; margin-bottom: 2px; text-transform: uppercase; }
+          .border-dashed { border-top: 1px dashed #000; margin: 6px 0; }
+          .border-double { border-top: 2px solid #000; margin: 6px 0; }
+          .flex-between { display: flex; justify-content: space-between; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; }
+          th { text-align: left; border-bottom: 1px solid #000; padding: 2px 0; font-size: 10px; }
+          td { padding: 3px 0; vertical-align: top; }
+          .grand-total { font-size: 14px; font-weight: 900; }
+          .policy-box { font-size: 9px; text-align: center; margin-top: 8px; }
+        </style>
+      </head>
+      <body>
+        <div class="text-center">
+          <div class="header-title">${store.name}</div>
+          <div>${store.tagline || ''}</div>
+          <div>${store.address || ''}</div>
+          <div>Tel: ${store.phone || ''}</div>
+        </div>
+        <div class="border-dashed"></div>
+        <div>
+          <div class="flex-between"><span>Invoice #:</span><span class="font-bold">${invoiceNumber}</span></div>
+          <div class="flex-between"><span>Date/Time:</span><span>${new Date(createdAt).toLocaleString()}</span></div>
+          <div class="flex-between"><span>Cashier:</span><span>${cashierName}</span></div>
+          ${
+            customerName && customerName !== 'Walk-in Customer'
+              ? `<div class="flex-between"><span>Customer:</span><span class="font-bold">${customerName} ${customerPhone ? '(' + customerPhone + ')' : ''}</span></div>`
+              : ''
+          }
+        </div>
+        <div class="border-double"></div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50%;">Item</th>
+              <th style="width: 15%; text-align: center;">Qty</th>
+              <th style="width: 15%; text-align: right;">Price</th>
+              <th style="width: 20%; text-align: right;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items
+              .map(
+                (it: any) => `
+              <tr>
+                <td>${it.name || it.product_name} ${it.color ? '<br/><small>' + it.color + (it.size ? '/' + it.size : '') + '</small>' : ''}</td>
+                <td style="text-align: center;">${it.quantity || 1}</td>
+                <td style="text-align: right;">${Math.round(Number(it.unitPrice || it.unit_price || 0))}</td>
+                <td style="text-align: right;" class="font-bold">${Math.round(Number(it.subtotal || (Number(it.unitPrice || it.unit_price || 0) * Number(it.quantity || 1)))).toLocaleString()}</td>
+              </tr>
+            `
+              )
+              .join('')}
+          </tbody>
+        </table>
+        <div class="border-double"></div>
+        <div>
+          <div class="flex-between"><span>Subtotal:</span><span>PKR ${subtotal.toLocaleString()}</span></div>
+          ${discountAmount > 0 ? `<div class="flex-between"><span>Discount:</span><span>-PKR ${discountAmount.toLocaleString()}</span></div>` : ''}
+          <div class="flex-between grand-total" style="margin: 4px 0;">
+            <span>NET TOTAL:</span>
+            <span>PKR ${netTotal.toLocaleString()}</span>
+          </div>
+          <div class="flex-between"><span>Payment Method:</span><span class="font-bold">${paymentMethod}</span></div>
+          <div class="flex-between"><span>Paid Amount:</span><span>PKR ${paidAmount.toLocaleString()}</span></div>
+        </div>
+        <div class="border-dashed"></div>
+        <div class="policy-box">
+          ${returnPolicy}<br/><br/>
+          <strong>*** THANK YOU FOR VISITING BRAND 4 LESS ***</strong>
+        </div>
+        ${
+          withAutoPrint
+            ? `<script>
+                window.onload = function() {
+                  window.print();
+                  setTimeout(function() { window.close(); }, 500);
+                };
+              </script>`
+            : ''
+        }
+      </body>
+    </html>
+  `;
+
+  /**
+   * Direct Raw ESC/POS or Electron Native Silent Print
    */
   const handleDirectDtsPrint = async () => {
     setIsSendingRaw(true);
     try {
+      // 1. First Priority: Desktop Electron Silent Spooler Printing
+      if (window.electronAPI?.printReceipt) {
+        const html = generateReceiptHtml(false);
+        const res = await window.electronAPI.printReceipt({
+          htmlContent: html,
+          printerName: selectedPrinter || undefined,
+          silent: true,
+          paperWidth: '80mm',
+        });
+        if (res.success) {
+          setPrintSuccess(true);
+          setTimeout(() => setPrintSuccess(false), 3000);
+          return;
+        }
+      }
+
+      // 2. Second Priority: Backend Direct ESC/POS Spooler Dispatch
       await api.post('/hardware/print-escpos', {
         sale: {
           invoice_number: invoiceNumber,
@@ -126,112 +270,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
       return;
     }
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Receipt - ${invoiceNumber}</title>
-          <meta charset="utf-8" />
-          <style>
-            @page {
-              size: 80mm auto;
-              margin: 0;
-            }
-            body {
-              font-family: "Courier New", Courier, monospace;
-              width: 72mm;
-              margin: 0 auto;
-              padding: 4mm 2mm;
-              font-size: 11px;
-              line-height: 1.3;
-              color: #000;
-              background: #fff;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .text-center { text-align: center; }
-            .text-right { text-align: right; }
-            .font-bold { font-weight: bold; }
-            .header-title { font-size: 15px; font-weight: 900; letter-spacing: 1px; margin-bottom: 2px; text-transform: uppercase; }
-            .border-dashed { border-top: 1px dashed #000; margin: 6px 0; }
-            .border-double { border-top: 2px solid #000; margin: 6px 0; }
-            .flex-between { display: flex; justify-content: space-between; }
-            table { width: 100%; border-collapse: collapse; font-size: 11px; }
-            th { text-align: left; border-bottom: 1px solid #000; padding: 2px 0; font-size: 10px; }
-            td { padding: 3px 0; vertical-align: top; }
-            .grand-total { font-size: 14px; font-weight: 900; }
-            .policy-box { font-size: 9px; text-align: center; margin-top: 8px; }
-          </style>
-        </head>
-        <body>
-          <div class="text-center">
-            <div class="header-title">${store.name}</div>
-            <div>${store.tagline || ''}</div>
-            <div>${store.address || ''}</div>
-            <div>Tel: ${store.phone || ''}</div>
-          </div>
-          <div class="border-dashed"></div>
-          <div>
-            <div class="flex-between"><span>Invoice #:</span><span class="font-bold">${invoiceNumber}</span></div>
-            <div class="flex-between"><span>Date/Time:</span><span>${new Date(createdAt).toLocaleString()}</span></div>
-            <div class="flex-between"><span>Cashier:</span><span>${cashierName}</span></div>
-            ${
-              customerName && customerName !== 'Walk-in Customer'
-                ? `<div class="flex-between"><span>Customer:</span><span class="font-bold">${customerName} ${customerPhone ? '(' + customerPhone + ')' : ''}</span></div>`
-                : ''
-            }
-          </div>
-          <div class="border-double"></div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 50%;">Item</th>
-                <th style="width: 15%; text-align: center;">Qty</th>
-                <th style="width: 15%; text-align: right;">Price</th>
-                <th style="width: 20%; text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items
-                .map(
-                  (it: any) => `
-                <tr>
-                  <td>${it.name || it.product_name} ${it.color ? '<br/><small>' + it.color + (it.size ? '/' + it.size : '') + '</small>' : ''}</td>
-                  <td style="text-align: center;">${it.quantity || 1}</td>
-                  <td style="text-align: right;">${Math.round(Number(it.unitPrice || it.unit_price || 0))}</td>
-                  <td style="text-align: right;" class="font-bold">${Math.round(Number(it.subtotal || (Number(it.unitPrice || it.unit_price || 0) * Number(it.quantity || 1)))).toLocaleString()}</td>
-                </tr>
-              `
-                )
-                .join('')}
-            </tbody>
-          </table>
-          <div class="border-double"></div>
-          <div>
-            <div class="flex-between"><span>Subtotal:</span><span>PKR ${subtotal.toLocaleString()}</span></div>
-            ${discountAmount > 0 ? `<div class="flex-between"><span>Discount:</span><span>-PKR ${discountAmount.toLocaleString()}</span></div>` : ''}
-            <div class="flex-between grand-total" style="margin: 4px 0;">
-              <span>NET TOTAL:</span>
-              <span>PKR ${netTotal.toLocaleString()}</span>
-            </div>
-            <div class="flex-between"><span>Payment Method:</span><span class="font-bold">${paymentMethod}</span></div>
-            <div class="flex-between"><span>Paid Amount:</span><span>PKR ${paidAmount.toLocaleString()}</span></div>
-          </div>
-          <div class="border-dashed"></div>
-          <div class="policy-box">
-            ${returnPolicy}<br/><br/>
-            <strong>*** THANK YOU FOR VISITING BRAND 4 LESS ***</strong>
-          </div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 500);
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
+    const html = generateReceiptHtml(true);
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();

@@ -37,6 +37,7 @@ export const SettingsPage: React.FC = () => {
     receiptPrinter: '',
     kickDrawer: true,
     autoCutReceipt: true,
+    silentPrint: true,
   });
   const [users, setUsers] = useState<any[]>([]);
   const [backups, setBackups] = useState<any[]>([]);
@@ -77,7 +78,24 @@ export const SettingsPage: React.FC = () => {
       if (setRes.settings) setSettings(setRes.settings);
       if (usrRes.users) setUsers(usrRes.users);
       if (bkpRes.backups) setBackups(bkpRes.backups);
-      if (prnRes.printers) setPrinters(prnRes.printers);
+      
+      let printerList = prnRes.printers || [];
+      if (window.electronAPI?.getPrinters) {
+        try {
+          const electronPrinters = await window.electronAPI.getPrinters();
+          if (electronPrinters && electronPrinters.length > 0) {
+            const existingNames = new Set(printerList.map((p: any) => p.name));
+            for (const ep of electronPrinters) {
+              if (!existingNames.has(ep.name)) {
+                printerList.push({ name: ep.name, status: ep.status || 0, isDefault: ep.isDefault });
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+      if (printerList.length > 0) setPrinters(printerList);
     } catch (e) {
       console.error(e);
     } finally {
@@ -444,6 +462,16 @@ export const SettingsPage: React.FC = () => {
                       className="rounded text-slate-900"
                     />
                     <span className="font-medium">Auto Paper Cut</span>
+                  </label>
+
+                  <label className="col-span-2 flex items-center space-x-2 text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={settings.silentPrint !== false}
+                      onChange={(e) => setSettings({ ...settings, silentPrint: e.target.checked })}
+                      className="rounded text-slate-900"
+                    />
+                    <span className="font-medium">Silent Direct Thermal Print (Skip Print Dialog)</span>
                   </label>
                 </div>
 

@@ -29,8 +29,8 @@ export class AuthService {
       { expiresIn: CONFIG.JWT_EXPIRY } as jwt.SignOptions
     );
 
-    const { password_hash, pin_code, ...safeUser } = user;
-    return { token, user: safeUser };
+    const { password_hash, pin_code, must_change_password, ...safeUser } = user;
+    return { token, user: { ...safeUser, mustChangePassword: Boolean(must_change_password) } };
   }
 
   /**
@@ -67,8 +67,51 @@ export class AuthService {
       { expiresIn: CONFIG.JWT_EXPIRY } as jwt.SignOptions
     );
 
-    const { password_hash, pin_code, ...safeUser } = user;
-    return { token, user: safeUser };
+    const { password_hash, pin_code, must_change_password, ...safeUser } = user;
+    return { token, user: { ...safeUser, mustChangePassword: Boolean(must_change_password) } };
+  }
+
+  /**
+   * Forced or voluntary password change
+   */
+  static changePassword(userId: string, currentPassword: string, newPassword: string): { success: boolean; message: string } {
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(userId) as any;
+    if (!user) {
+      throw new Error('User not found.');
+    }
+
+    if (!currentPassword || !bcrypt.compareSync(currentPassword, user.password_hash)) {
+      throw new Error('Current password is incorrect.');
+    }
+
+    const cleanNew = (newPassword || '').trim();
+    if (cleanNew.length < 8) {
+      throw new Error('New password must be at least 8 characters long.');
+    }
+
+    if (bcrypt.compareSync(cleanNew, user.password_hash)) {
+      throw new Error('New password must be different from current password.');
+    }
+
+    const newHash = bcrypt.hashSync(cleanNew, 10);
+    db.prepare(`
+      UPDATE users
+      SET password_hash = ?,
+          must_change_password = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newHash, userId);
+
+    AuditService.log({
+      userId,
+      action: 'CHANGE_PASSWORD',
+      entityType: 'USER',
+      entityId: userId,
+      newValue: { username: user.username, forcedPasswordResolved: true },
+    });
+
+    return { success: true, message: 'Password updated successfully.' };
   }
 
   /**

@@ -50,6 +50,16 @@ export class AuthController {
     res.json({ success: true, user: req.user });
   }
 
+  static async changePassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const result = AuthService.changePassword(req.user!.id, currentPassword, newPassword);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
   static async getUsers(req: Request, res: Response): Promise<void> {
     try {
       const users = AuthService.getUsers();

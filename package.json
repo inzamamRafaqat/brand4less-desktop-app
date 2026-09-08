@@ -11,15 +11,17 @@
     "build:ui": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "build": "npm run build:ui && npm run build:server",
+    "build:electron": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis",
+    "pack": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "start": "cross-env NODE_ENV=production node dist-server/server.js",
     "electron:start": "cross-env NODE_ENV=production electron electron/main.cjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "keywords": [],
-  "author": "",
+  "author": "Brand4Less",
   "license": "ISC",
-  "description": "",
+  "description": "Brand 4 Less Retail Management & POS Suite",
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.8.1",
@@ -63,6 +65,7 @@
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
     "electron": "^44.1.0",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.5.26",
     "supertest": "^7.2.2",
     "tailwindcss": "^3.4.17",
@@ -70,5 +73,41 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
+  },
+  "build": {
+    "appId": "com.brand4less.pos",
+    "productName": "Brand 4 Less POS",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-server/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "sign": null,
+      "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Brand 4 Less POS"
+    }
   }
 }

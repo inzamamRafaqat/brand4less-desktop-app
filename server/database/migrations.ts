@@ -13,6 +13,7 @@ export function runMigrations(): void {
       pin_code TEXT,
       full_name TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('ADMIN', 'MANAGER', 'STAFF')),
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -338,6 +339,20 @@ export function runMigrations(): void {
   // Value of goods traded in against this sale during an exchange. Counts toward
   // payment sufficiency without being a cash/card tender line.
   addColumnIfMissing('sales', 'exchange_credit', 'REAL NOT NULL DEFAULT 0.0');
+
+  // Forced password change gate flag for accounts initialized with default passwords.
+  addColumnIfMissing('users', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Flag seeded default accounts still using initial default passwords
+  const defaultAccounts = db
+    .prepare("SELECT id, username, password_hash, must_change_password FROM users WHERE username IN ('admin', 'manager', 'cashier')")
+    .all() as any[];
+  for (const acc of defaultAccounts) {
+    const defaultPw = acc.username === 'cashier' ? 'staff123' : 'admin123';
+    if (bcrypt.compareSync(defaultPw, acc.password_hash) && acc.must_change_password === 0) {
+      db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run(acc.id);
+    }
+  }
 
   // ── Data migration: hash any legacy plaintext quick-POS PINs in place ──────
   // Older builds stored `pin_code` as cleartext (e.g. "1234"). Anyone who could

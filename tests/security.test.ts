@@ -154,4 +154,119 @@ describe('Security & integrity hardening', () => {
     );
     expect(clientMessage('a bare string')).toBe('Something went wrong. Please try again.');
   });
+
+  it('allows STAFF to VIEW_SALES while restricting VIEW_FINANCIAL_REPORTS', async () => {
+    const { hasPermission } = await import('../server/domain/rbac.js');
+    expect(hasPermission('STAFF', 'VIEW_SALES')).toBe(true);
+    expect(hasPermission('MANAGER', 'VIEW_SALES')).toBe(true);
+    expect(hasPermission('ADMIN', 'VIEW_SALES')).toBe(true);
+    expect(hasPermission('STAFF', 'VIEW_FINANCIAL_REPORTS')).toBe(false);
+  });
+
+  it('allows STAFF to access /api/sales route while blocking financial reports', async () => {
+    const request = (await import('supertest')).default;
+    const { createApp } = await import('../server/app.js');
+    const { AuthService } = await import('../server/services/auth.service.js');
+
+    const app = createApp();
+    // Cashier login
+    const staffLogin = AuthService.login('cashier', 'staff123');
+    const staffToken = staffLogin.token;
+
+    // Staff can access /api/sales
+    const salesRes = await request(app)
+      .get('/api/sales')
+      .set('Authorization', `Bearer ${staffToken}`);
+    expect(salesRes.status).toBe(200);
+    expect(salesRes.body.success).toBe(true);
+
+    // Staff cannot access /api/reports/profit-loss (requires VIEW_FINANCIAL_REPORTS)
+    const reportRes = await request(app)
+      .get('/api/reports/profit-loss')
+      .set('Authorization', `Bearer ${staffToken}`);
+    expect(reportRes.status).toBe(403);
+  });
+
+  it('supports root /api/login and /api/login-pin route aliases', async () => {
+    const request = (await import('supertest')).default;
+    const { createApp } = await import('../server/app.js');
+
+    const app = createApp();
+
+    const loginRes = await request(app)
+      .post('/api/login')
+      .send({ username: 'cashier', password: 'staff123' });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.success).toBe(true);
+    expect(loginRes.body.token).toBeDefined();
+
+    const pinRes = await request(app)
+      .post('/api/login-pin')
+      .send({ pin: '0000' });
+    expect(pinRes.status).toBe(200);
+    expect(pinRes.body.success).toBe(true);
+    expect(pinRes.body.token).toBeDefined();
+  });
+
+  it('flags default seeded accounts with mustChangePassword and enforces password change workflow', async () => {
+    const request = (await import('supertest')).default;
+    const { createApp } = await import('../server/app.js');
+    const { AuthService } = await import('../server/services/auth.service.js');
+    const { getDb } = await import('../server/database/db.js');
+
+    const app = createApp();
+
+    // 1. Login with seeded admin account returns mustChangePassword
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'admin', password: 'admin123' });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user.mustChangePassword).toBe(true);
+    const token = loginRes.body.token;
+
+    // 2. Reject change-password if current password wrong
+    const wrongCurrentRes = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'wrongpassword', newPassword: 'BrandNewPassword2026!' });
+    expect(wrongCurrentRes.status).toBe(400);
+    expect(wrongCurrentRes.body.message).toMatch(/Current password is incorrect/i);
+
+    // 3. Reject change-password if new password is too short (< 8 chars)
+    const shortRes = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'admin123', newPassword: 'short' });
+    expect(shortRes.status).toBe(400);
+    expect(shortRes.body.message).toMatch(/at least 8 characters/i);
+
+    // 4. Reject change-password if new password is identical to current
+    const sameRes = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'admin123', newPassword: 'admin123' });
+    expect(sameRes.status).toBe(400);
+    expect(sameRes.body.message).toMatch(/different from current/i);
+
+    // 5. Successfully update password
+    const successRes = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'admin123', newPassword: 'StrongAdminPassword2026!' });
+    expect(successRes.status).toBe(200);
+    expect(successRes.body.success).toBe(true);
+
+    // 6. Next login reflects mustChangePassword = false
+    const reloginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'admin', password: 'StrongAdminPassword2026!' });
+    expect(reloginRes.status).toBe(200);
+    expect(reloginRes.body.user.mustChangePassword).toBe(false);
+
+    // Restore admin password for any subsequent test suites
+    const db = getDb();
+    const adminHash = (await import('bcryptjs')).default.hashSync('admin123', 10);
+    db.prepare("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE username = 'admin'").run(adminHash);
+  });
 });
+

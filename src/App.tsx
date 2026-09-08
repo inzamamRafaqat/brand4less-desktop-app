@@ -16,6 +16,7 @@ import { SuppliersPage } from './pages/SuppliersPage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ForcedPasswordChangeModal } from './components/auth/ForcedPasswordChangeModal';
 import { api } from './lib/api';
 import { RefreshCw } from 'lucide-react';
 
@@ -106,6 +107,9 @@ export const AppContent: React.FC = () => {
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] dark:bg-[#090D16] text-slate-900 dark:text-slate-100 overflow-hidden font-sans select-none">
+      {/* Forced Password Change Gate Modal */}
+      <ForcedPasswordChangeModal />
+
       {/* Full-Height Expandable Left Sidebar */}
       <Sidebar
         activeTab={activeTab}

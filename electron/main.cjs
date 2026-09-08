@@ -39,8 +39,15 @@ function startBackend() {
   if (isDev) return Promise.resolve();
 
   const compiled = path.join(__dirname, '../dist-server/server.js');
-  const source = path.join(__dirname, '../server/server.ts');
-  const env = { ...process.env, NODE_ENV: 'production', PORT: String(API_PORT), HOST: API_HOST };
+  const userDataPath = app.getPath('userData');
+  const env = {
+    ...process.env,
+    NODE_ENV: 'production',
+    PORT: String(API_PORT),
+    HOST: API_HOST,
+    DATA_DIR: process.env.DATA_DIR || path.join(userDataPath, 'data'),
+    ELECTRON_RUN_AS_NODE: '1',
+  };
 
   if (fs.existsSync(compiled)) {
     serverProcess = fork(compiled, [], { env, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
@@ -92,7 +99,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'Brand 4 Less — Retail Management & POS Suite',
-    icon: path.join(__dirname, '../public/favicon.ico'),
+    ...(fs.existsSync(path.join(__dirname, '../public/favicon.ico')) ? { icon: path.join(__dirname, '../public/favicon.ico') } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -127,8 +134,19 @@ function createWindow() {
 
 // ── IPC HANDLERS ────────────────────────────────────────────────────────────
 
-// 1. Silent / Thermal Receipt Native Printing
-ipcMain.handle('print-receipt', async (event, { htmlContent, paperWidth }) => {
+// 1. Silent / Thermal Receipt Native Printing & Hardware Queries
+ipcMain.handle('get-printers', async () => {
+  try {
+    if (mainWindow && mainWindow.webContents) {
+      return await mainWindow.webContents.getPrintersAsync();
+    }
+  } catch (err) {
+    console.error('Failed to get printers from webContents:', err);
+  }
+  return [];
+});
+
+ipcMain.handle('print-receipt', async (event, { htmlContent, printerName, silent = true, paperWidth = '80mm' }) => {
   try {
     const printWindow = new BrowserWindow({
       show: false,
@@ -145,12 +163,17 @@ ipcMain.handle('print-receipt', async (event, { htmlContent, paperWidth }) => {
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
 
     return new Promise((resolve) => {
+      const printOptions = {
+        silent: silent !== false,
+        printBackground: true,
+        margins: { marginType: 'none' },
+      };
+      if (printerName) {
+        printOptions.deviceName = printerName;
+      }
+
       printWindow.webContents.print(
-        {
-          silent: false, // Set to true for direct silent POS thermal printing
-          printBackground: true,
-          margins: { marginType: 'none' },
-        },
+        printOptions,
         (success, failureReason) => {
           printWindow.close();
           if (success) {

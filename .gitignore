@@ -47,5 +47,10 @@ data/.jwt-secret
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
-Thumbs.db
+# Build releases
+release/
+dist-builder/
+
+# Temporary utility scripts
+compile_pdf_electron.cjs
+

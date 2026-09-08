@@ -56,8 +56,11 @@ const pinLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8, blockMs: 15 * 6
 
 // ── 1. AUTHENTICATION & USERS ─────────────────────────────────────────────
 apiRouter.post('/auth/login', loginLimiter, AuthController.login);
+apiRouter.post('/login', loginLimiter, AuthController.login);
 apiRouter.post('/auth/login-pin', pinLimiter, AuthController.loginWithPin);
+apiRouter.post('/login-pin', pinLimiter, AuthController.loginWithPin);
 apiRouter.post('/auth/verify-admin-pin', authenticateToken, pinLimiter, AuthController.verifyAdminPin);
+apiRouter.post('/auth/change-password', authenticateToken, AuthController.changePassword);
 apiRouter.get('/auth/me', authenticateToken, AuthController.me);
 apiRouter.get('/auth/users', authenticateToken, requireRole('ADMIN'), AuthController.getUsers);
 apiRouter.post('/auth/users', authenticateToken, requireRole('ADMIN'), AuthController.createUser);
@@ -97,7 +100,7 @@ apiRouter.post('/upload', authenticateToken, requirePermission('MANAGE_PRODUCTS'
 
 // ── 3. POS & SALES ────────────────────────────────────────────────────────
 apiRouter.post('/pos/checkout', authenticateToken, requirePermission('POS_CHECKOUT'), PosController.checkout);
-apiRouter.get('/sales', authenticateToken, requirePermission('VIEW_FINANCIAL_REPORTS'), PosController.getSales);
+apiRouter.get('/sales', authenticateToken, requirePermission('VIEW_SALES'), PosController.getSales);
 apiRouter.get('/sales/:id', authenticateToken, PosController.getSaleById);
 apiRouter.get('/sales/:id/receipt', authenticateToken, PosController.getReceipt);
 

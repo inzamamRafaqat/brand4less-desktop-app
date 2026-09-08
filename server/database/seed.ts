@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { CONFIG } from '../config/index.js';
 
-export function seedDatabase(): void {
+export function seedDatabase(options?: { seedDemoData?: boolean }): void {
   const db = getDb();
 
   // 1. Seed Users (Admin & Staff)
@@ -13,15 +13,15 @@ export function seedDatabase(): void {
     const staffPasswordHash = bcrypt.hashSync('staff123', 10);
 
     const insertUser = db.prepare(`
-      INSERT INTO users (id, username, password_hash, pin_code, full_name, role, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO users (id, username, password_hash, pin_code, full_name, role, is_active, must_change_password)
+      VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     `);
 
     // PINs are stored as bcrypt hashes, same as passwords.
     insertUser.run(uuidv4(), 'admin', adminPasswordHash, bcrypt.hashSync('1234', 10), 'System Administrator', 'ADMIN');
     insertUser.run(uuidv4(), 'manager', adminPasswordHash, bcrypt.hashSync('5678', 10), 'Store Manager', 'MANAGER');
     insertUser.run(uuidv4(), 'cashier', staffPasswordHash, bcrypt.hashSync('0000', 10), 'Front Desk Cashier', 'STAFF');
-    console.log('✅ Default users seeded — CHANGE THE DEFAULT PASSWORDS AND PINS IMMEDIATELY (admin/admin123, manager/admin123, cashier/staff123)');
+    console.log('✅ Default users seeded with must_change_password=1 — CHANGE DEFAULT PASSWORDS (admin/admin123, manager/admin123, cashier/staff123)');
   }
 
   // 2. Seed Standard Categories with specific icon types and attribute requirements
@@ -113,8 +113,16 @@ export function seedDatabase(): void {
     console.log(`✅ App settings initialized.`);
   }
 
-  // 6. Seed Initial Rich Product Catalog
+  // 6. Seed Initial Rich Product Catalog (Demo only when flag is set)
+  const shouldSeedDemo = Boolean(options?.seedDemoData || process.env.SEED_DEMO_DATA === 'true');
   const productCount = db.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number };
+  if (!shouldSeedDemo) {
+    if (productCount.count === 0) {
+      console.log('ℹ️ Skipping demo catalog seed (set SEED_DEMO_DATA=true to populate sample inventory).');
+    }
+    return;
+  }
+
   if (productCount.count === 0) {
     const categoriesList = db.prepare('SELECT id, name FROM categories').all() as { id: string; name: string }[];
     const categoryMap = new Map(categoriesList.map(c => [c.name, c.id]));
