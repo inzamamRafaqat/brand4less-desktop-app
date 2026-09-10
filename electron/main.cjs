@@ -55,7 +55,12 @@ function startBackend() {
     fs.mkdirSync(userDataPath, { recursive: true });
   }
   const logFile = path.join(userDataPath, 'backend.log');
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  let logFd = 'ignore';
+  try {
+    logFd = fs.openSync(logFile, 'a');
+  } catch (err) {
+    console.error('Failed to open backend.log:', err);
+  }
 
   const bundledNode = path.join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
   const nodeBin = (app.isPackaged && fs.existsSync(bundledNode))
@@ -66,7 +71,7 @@ function startBackend() {
     serverProcess = spawn(nodeBin, [compiled], {
       cwd: baseDir,
       env,
-      stdio: ['ignore', logStream, logStream],
+      stdio: ['ignore', logFd, logFd],
       shell: false,
       windowsHide: true,
     });
@@ -84,7 +89,7 @@ function startBackend() {
         new Error(`No backend build found at ${compiled}. Run "npm run build" before starting in production.`)
       );
     }
-    serverProcess = spawn(tsxBin, [source], { cwd: baseDir, env, stdio: ['ignore', logStream, logStream], shell: false, windowsHide: true });
+    serverProcess = spawn(tsxBin, [source], { cwd: baseDir, env, stdio: ['ignore', logFd, logFd], shell: false, windowsHide: true });
   }
 
   serverProcess.on('exit', (code) => {
