@@ -69,9 +69,9 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   const rawSale = sale || receiptData?.invoice || receiptData?.sale || {};
   const store = receiptData?.store || {
     name: 'BRAND 4 LESS',
-    tagline: 'Premium Export Leftovers & Apparel Outlet',
-    address: 'Shop # 4, Main Commercial Boulevard, Gulberg III, Lahore',
-    phone: '+92 300 1234567',
+    tagline: 'fb : www.Brand4Less.Facebook.com',
+    address: 'College Road Near Faysal Bank Pakpattan',
+    phone: '0300-6940177, 0322-8402141',
     currency: 'PKR',
   };
 
@@ -87,7 +87,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   const paymentMethod = rawSale.paymentMethod || rawSale.payment_method || 'CASH';
   const items = receiptData?.items || rawSale.items || [];
   const qrDataUrl = receiptData?.qrDataUrl;
-  const returnPolicy = receiptData?.returnPolicy || 'Items can be exchanged within 7 days with original receipt. No cash refund on sale items.';
+  const returnPolicy = receiptData?.returnPolicy || 'Refund & Exchange 48 Hours\nThere is no gauranty of export Items.';
 
   /**
    * Generates Clean Receipt HTML Document
@@ -185,7 +185,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
         </div>
         <div class="border-dashed"></div>
         <div class="policy-box">
-          ${returnPolicy}<br/><br/>
+          ${String(returnPolicy).replace(/\n/g, '<br/>')}<br/><br/>
           <strong>*** THANK YOU FOR VISITING BRAND 4 LESS ***</strong>
         </div>
         ${
@@ -410,7 +410,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
 
           {/* Footer Note */}
           <div className="text-center text-[10px] text-slate-500 space-y-1 pt-1">
-            <p className="leading-tight">{returnPolicy}</p>
+            <p className="leading-tight whitespace-pre-line font-medium">{returnPolicy}</p>
             <p className="font-bold text-slate-800">*** THANK YOU FOR SHOPPING ***</p>
           </div>
         </div>

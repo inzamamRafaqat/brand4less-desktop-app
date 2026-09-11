@@ -49,6 +49,20 @@ export const useSpeedXScanner = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is actively typing in a standard input, textarea, or contentEditable element
+      // (unless the input has the data-scanner-input attribute explicitly)
+      const target = e.target as HTMLElement | null;
+      const isFormField =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
+      if (isFormField && !target.hasAttribute('data-scanner-input')) {
+        return;
+      }
+
       const now = Date.now();
       const timeDiff = now - lastKeyTimeRef.current;
       lastKeyTimeRef.current = now;

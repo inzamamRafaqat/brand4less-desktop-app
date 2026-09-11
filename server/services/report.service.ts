@@ -151,6 +151,19 @@ export class ReportService {
       ORDER BY month_num ASC
     `).all(currentYear) as any[];
 
+    // 7b. Real 5-Year Sales Trend Data
+    const yearlySalesTrend = db.prepare(`
+      SELECT
+        strftime('%Y', ${sqlLocal('created_at')}) as year_num,
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as total_profit
+      FROM sales
+      WHERE status != 'CANCELLED'
+      GROUP BY strftime('%Y', ${sqlLocal('created_at')})
+      ORDER BY year_num ASC
+      LIMIT 5
+    `).all() as any[];
+
     // 8. Real Category Revenue Distribution Mix
     const categoryMix = db.prepare(`
       SELECT 
@@ -188,7 +201,9 @@ export class ReportService {
         inventoryRetailValue: totalInventoryValue.retail_val,
       },
       salesTrend: last7Days,
+      weeklySalesTrend: last7Days,
       monthlySalesTrend,
+      yearlySalesTrend,
       categoryMix,
       recentActivities,
       topProducts,

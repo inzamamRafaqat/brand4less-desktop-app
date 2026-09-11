@@ -18,6 +18,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { PaymentVoucherModal, VoucherData } from '../components/common/PaymentVoucherModal';
+import { QuickVariantModal } from '../components/common/QuickVariantModal';
 
 export const SuppliersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -31,6 +32,8 @@ export const SuppliersPage: React.FC = () => {
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [isNewPurchaseOpen, setIsNewPurchaseOpen] = useState(false);
   const [isPaySupplierOpen, setIsPaySupplierOpen] = useState(false);
+  const [isQuickVariantOpen, setIsQuickVariantOpen] = useState(false);
+  const [activeItemRowIdx, setActiveItemRowIdx] = useState<number>(0);
   const [activeVoucherData, setActiveVoucherData] = useState<VoucherData | null>(null);
 
   // New Supplier Form
@@ -505,16 +508,20 @@ export const SuppliersPage: React.FC = () => {
                 <div className="max-h-40 overflow-y-auto space-y-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800">
                   {purchaseData.items.map((item, idx) => (
                     <div key={idx} className="grid grid-cols-7 gap-2 items-center text-xs">
-                      <div className="col-span-3">
+                      <div className="col-span-3 flex items-center space-x-1">
                         <select
                           required
                           value={item.variantId}
                           onChange={(e) => {
                             const updated = [...purchaseData.items];
                             updated[idx].variantId = e.target.value;
+                            const matched = allVariants.find((v) => v.id === e.target.value);
+                            if (matched && matched.costPrice) {
+                              updated[idx].unitCost = matched.costPrice;
+                            }
                             setPurchaseData({ ...purchaseData, items: updated });
                           }}
-                          className="w-full py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white text-xs"
+                          className="flex-1 py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white text-xs"
                         >
                           <option value="">Select Variant...</option>
                           {allVariants.map((v) => (
@@ -523,6 +530,17 @@ export const SuppliersPage: React.FC = () => {
                             </option>
                           ))}
                         </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveItemRowIdx(idx);
+                            setIsQuickVariantOpen(true);
+                          }}
+                          title="Create New Variant"
+                          className="px-2 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-lg text-[10px] font-bold shrink-0 transition"
+                        >
+                          + New
+                        </button>
                       </div>
 
                       <div className="col-span-2">
@@ -750,6 +768,21 @@ export const SuppliersPage: React.FC = () => {
           onClose={() => setActiveVoucherData(null)}
         />
       )}
+
+      {/* ── QUICK VARIANT MODAL ─────────────────────────────────────────── */}
+      <QuickVariantModal
+        isOpen={isQuickVariantOpen}
+        onClose={() => setIsQuickVariantOpen(false)}
+        onCreated={(newVar) => {
+          setAllVariants((prev) => [newVar, ...prev]);
+          const updated = [...purchaseData.items];
+          if (updated[activeItemRowIdx]) {
+            updated[activeItemRowIdx].variantId = newVar.id;
+            updated[activeItemRowIdx].unitCost = newVar.costPrice;
+          }
+          setPurchaseData({ ...purchaseData, items: updated });
+        }}
+      />
     </div>
   );
 };

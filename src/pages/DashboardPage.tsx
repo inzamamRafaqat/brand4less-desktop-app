@@ -96,22 +96,73 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
     );
   }
 
-  const { today, thisMonth, operational, salesTrend = [], monthlySalesTrend = [], categoryMix = [], recentActivities = [], topProducts = [] } = data || {};
+  const {
+    today,
+    thisMonth,
+    operational,
+    salesTrend = [],
+    weeklySalesTrend = [],
+    monthlySalesTrend = [],
+    yearlySalesTrend = [],
+    categoryMix = [],
+    recentActivities = [],
+    topProducts = [],
+  } = data || {};
 
-  // Chart Setup matching the PrimeNG multi-tone stacked bar aesthetics
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
-  const chartSalesData = months.map((_, i) => {
-    const monthNum = String(i + 1).padStart(2, '0');
-    const matched = monthlySalesTrend.find((m: any) => m.month_num === monthNum);
-    return matched ? Number(matched.total_sales) : (thisMonth?.sales && i === new Date().getMonth() ? thisMonth.sales : 0);
-  });
+  // Dynamic Chart Setup matching WEEKLY / MONTHLY / YEARLY
+  let chartLabels: string[] = [];
+  let chartSalesData: number[] = [];
+  let chartProfitData: number[] = [];
+  let chartPurchasesData: number[] = [];
 
-  const chartProfitData = chartSalesData.map((s) => Math.round(s * 0.45));
-  const chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+  if (period === 'WEEKLY') {
+    const weeklyList = weeklySalesTrend.length > 0 ? weeklySalesTrend : salesTrend;
+    if (weeklyList.length > 0) {
+      chartLabels = weeklyList.map((d: any) => {
+        const parts = String(d.sale_date).split('-');
+        if (parts.length === 3) {
+          const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          return dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        }
+        return d.sale_date;
+      });
+      chartSalesData = weeklyList.map((d: any) => Number(d.daily_sales || 0));
+      chartProfitData = weeklyList.map((d: any) => Number(d.daily_profit || Math.round(Number(d.daily_sales || 0) * 0.45)));
+      chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+    } else {
+      chartLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      chartSalesData = [0, 0, 0, 0, 0, 0, Number(today?.sales || 0)];
+      chartProfitData = chartSalesData.map((s) => Math.round(s * 0.45));
+      chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+    }
+  } else if (period === 'YEARLY') {
+    const currentYear = new Date().getFullYear();
+    const defaultYears = [currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map(String);
+    chartLabels = defaultYears;
+    chartSalesData = defaultYears.map((yr) => {
+      const found = yearlySalesTrend.find((y: any) => String(y.year_num) === yr);
+      return found ? Number(found.total_sales) : (yr === String(currentYear) ? Number(thisMonth?.sales || today?.sales || 0) : 0);
+    });
+    chartProfitData = defaultYears.map((yr) => {
+      const found = yearlySalesTrend.find((y: any) => String(y.year_num) === yr);
+      return found ? Number(found.total_profit) : Math.round(chartSalesData[defaultYears.indexOf(yr)] * 0.45);
+    });
+    chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+  } else {
+    // MONTHLY (Default)
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    chartLabels = months;
+    chartSalesData = months.map((_, i) => {
+      const monthNum = String(i + 1).padStart(2, '0');
+      const matched = monthlySalesTrend.find((m: any) => m.month_num === monthNum);
+      return matched ? Number(matched.total_sales) : (thisMonth?.sales && i === new Date().getMonth() ? thisMonth.sales : 0);
+    });
+    chartProfitData = chartSalesData.map((s) => Math.round(s * 0.45));
+    chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+  }
 
   const activityChartData = {
-    labels: months,
+    labels: chartLabels,
     datasets: [
       {
         label: 'Gross Retail Sales (PKR)',
@@ -222,21 +273,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
 
       {/* ── 4 KPI METRIC CARDS (EXACT PRIMENG DESIGN) ────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 1. Total Net Sales */}
+        {/* 1. Today & Month Net Sales */}
         <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow flex flex-col justify-between h-36 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Net Sales</span>
-            <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white flex items-center justify-center">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Today's Retail Sales</span>
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
               <ShoppingCart className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-black text-slate-950 dark:text-white tracking-tight">
-            PKR {totalSalesToDisplay.toLocaleString()}
+            PKR {Number(today?.sales || 0).toLocaleString()}
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-slate-400">Month-to-Date</span>
+            <span className="text-[10px] text-slate-400">Month-to-Date: PKR {Number(thisMonth?.sales || 0).toLocaleString()}</span>
             <span className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-black text-[10px]">
-              Active
+              Live
             </span>
           </div>
         </div>
@@ -311,7 +362,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
       <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-6 rounded-3xl soft-shadow space-y-4 transition-colors">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Annual Sales & Revenue Trend</h3>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              {period === 'WEEKLY'
+                ? 'Weekly Sales & Revenue Trend (Last 7 Days)'
+                : period === 'YEARLY'
+                ? 'Multi-Year Sales & Revenue Trend'
+                : 'Annual 12-Month Sales & Revenue Trend'}
+            </h3>
             <p className="text-xs text-slate-400">Multi-tone breakdown of retail sales, gross margins, and inventory cost basis</p>
           </div>
 
