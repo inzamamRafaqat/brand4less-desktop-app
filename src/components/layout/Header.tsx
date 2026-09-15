@@ -168,7 +168,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   useEffect(() => {
     fetchLiveNotifications();
-    const interval = setInterval(fetchLiveNotifications, 30000);
+    const interval = setInterval(fetchLiveNotifications, 180000); // 3-minute health/notification refresh
     return () => clearInterval(interval);
   }, []);
 

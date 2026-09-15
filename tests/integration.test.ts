@@ -9,6 +9,10 @@ import { KhataService } from '../server/services/khata.service.js';
 import { SupplierService } from '../server/services/supplier.service.js';
 import { ExpenseService } from '../server/services/expense.service.js';
 import { ReportService } from '../server/services/report.service.js';
+import { BackupService } from '../server/services/backup.service.js';
+import { CONFIG } from '../server/config/index.js';
+import fs from 'fs';
+import path from 'path';
 import { hasPermission } from '../server/domain/rbac.js';
 
 describe('Brand 4 Less — Enterprise System Integration Tests', () => {
@@ -271,6 +275,38 @@ describe('Brand 4 Less — Enterprise System Integration Tests', () => {
       expect(pnl).toBeDefined();
       expect(pnl.revenue.grossSales).toBeGreaterThan(0);
       expect(pnl.expenses.totalExpenses).toBeGreaterThan(0);
+    });
+  });
+
+  describe('9. Database Backup & Import Engine', () => {
+    it('should create backup snapshot, verify integrity, and safely import backup files', () => {
+      const backup = BackupService.createBackup('test_audit_snap');
+      expect(backup.isValid).toBe(true);
+      expect(backup.sizeBytes).toBeGreaterThan(0);
+
+      // Verify listing includes the newly created backup
+      const list = BackupService.listBackups();
+      expect(list.some((b) => b.filename === backup.filename)).toBe(true);
+
+      // Import backup from existing file (Option 1: Add to snapshot list without immediate overwrite)
+      const imported = BackupService.importBackup(backup.filepath, 'my_external_backup.db', false, adminUser.id);
+      expect(imported.isValid).toBe(true);
+      expect(imported.restored).toBe(false);
+      expect(imported.filename).toContain('imported_');
+
+      // Reject non-SQLite corrupted file
+      const dummyPath = path.join(CONFIG.DATA_DIR, 'corrupt.db');
+      fs.writeFileSync(dummyPath, 'NOT A VALID SQLITE DATABASE');
+      expect(() => {
+        BackupService.importBackup(dummyPath, 'corrupt.db', false, adminUser.id);
+      }).toThrow();
+
+      // Clean up test files
+      try {
+        if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
+        if (fs.existsSync(imported.filepath)) fs.unlinkSync(imported.filepath);
+        if (fs.existsSync(backup.filepath)) fs.unlinkSync(backup.filepath);
+      } catch (_) {}
     });
   });
 });

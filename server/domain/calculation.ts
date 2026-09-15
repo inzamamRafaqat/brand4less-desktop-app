@@ -90,11 +90,16 @@ export function calculateSaleTotals(
   let totalProfit = 0;
 
   const items: CalculatedItem[] = rawItems.map((item) => {
-    const itemDisc = item.discountAmount || 0;
+    // Cap the line discount at the line's gross value. Without this an
+    // out-of-range discount would poison the sale-level discount total and the
+    // stored per-line discount_amount, even though calculateItemMetrics already
+    // clamps its own subtotal.
+    const lineGross = Math.max(0, item.unitPrice) * Math.max(0, item.quantity);
+    const itemDisc = Number(Math.min(Math.max(0, item.discountAmount || 0), lineGross).toFixed(2));
     const { subtotal: itemSubtotal, totalCost: itemCost, profit: itemProfit } =
       calculateItemMetrics(item.quantity, item.unitPrice, item.unitCost, itemDisc);
 
-    subtotal += item.unitPrice * item.quantity;
+    subtotal += lineGross;
     itemDiscountsTotal += itemDisc;
     totalCost += itemCost;
     totalProfit += itemProfit;
@@ -111,19 +116,24 @@ export function calculateSaleTotals(
     };
   });
 
-  const totalDiscount = Number((itemDiscountsTotal + overallDiscount).toFixed(2));
+  // Cap the invoice-level discount at whatever gross value remains after line
+  // discounts, so the stored sale discount_amount can never exceed sale subtotal.
+  const safeOverallDiscount = Number(
+    Math.min(Math.max(0, overallDiscount), Math.max(0, subtotal - itemDiscountsTotal)).toFixed(2)
+  );
+  const totalDiscount = Number((itemDiscountsTotal + safeOverallDiscount).toFixed(2));
   const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
   const taxAmount = Number(((discountedSubtotal * taxRatePercent) / 100).toFixed(2));
   const netTotal = Number((discountedSubtotal + taxAmount).toFixed(2));
 
   // Adjust total profit after overall discount
-  const finalProfit = Number((totalProfit - overallDiscount).toFixed(2));
+  const finalProfit = Number((totalProfit - safeOverallDiscount).toFixed(2));
 
   return {
     items,
     subtotal: Number(subtotal.toFixed(2)),
     itemDiscountsTotal: Number(itemDiscountsTotal.toFixed(2)),
-    overallDiscount: Number(overallDiscount.toFixed(2)),
+    overallDiscount: safeOverallDiscount,
     totalDiscount,
     taxAmount,
     netTotal,
@@ -134,11 +144,16 @@ export function calculateSaleTotals(
 
 /**
  * Calculates net profit of the business across any time window.
- * Formula: Sales Gross Profit - Returns Lost Profit - Operating Expenses - Salaries
+ * Formula: Sales Gross Profit - Returns Profit Reversal - Operating Expenses - Salaries
+ *
+ * `returnsProfitReversal` is the *margin* handed back through returns in the
+ * period (refund value minus the cost of the goods that came back), not the
+ * gross refund amount — subtracting the gross refund would double-count the
+ * COGS portion that was never profit.
  */
 export function calculatePeriodNetProfit(
   salesGrossProfit: number,
-  returnsRefundLoss: number,
+  returnsProfitReversal: number,
   operatingExpenses: number,
   salariesPaid: number
 ): {
@@ -146,7 +161,7 @@ export function calculatePeriodNetProfit(
   netOperatingProfit: number;
   totalOperatingCosts: number;
 } {
-  const adjustedGrossProfit = salesGrossProfit - returnsRefundLoss;
+  const adjustedGrossProfit = salesGrossProfit - returnsProfitReversal;
   const totalOperatingCosts = operatingExpenses + salariesPaid;
   const netOperatingProfit = Number((adjustedGrossProfit - totalOperatingCosts).toFixed(2));
 

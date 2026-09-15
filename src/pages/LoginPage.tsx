@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, KeyRound, AlertCircle, Sparkles, ShieldCheck } from 'lucide-react';
 
+import brandLogo from '../assets/logo.jpg';
+
 export const LoginPage: React.FC = () => {
   const [mode, setMode] = useState<'PIN' | 'PASSWORD'>('PIN');
   const [pin, setPin] = useState('');
@@ -79,15 +81,14 @@ export const LoginPage: React.FC = () => {
       <div className="w-full max-w-md bg-white border border-gray-100 rounded-3xl p-8 soft-shadow-md relative">
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-black text-white rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md">
-            <div className="grid grid-cols-2 gap-1">
-              <span className="w-1.5 h-1.5 rounded-xs bg-white"></span>
-              <span className="w-1.5 h-1.5 rounded-xs bg-white"></span>
-              <span className="w-1.5 h-1.5 rounded-xs bg-white"></span>
-              <span className="w-1.5 h-1.5 rounded-xs bg-white"></span>
-            </div>
+          <div className="w-16 h-16 bg-amber-400/20 border border-amber-300/40 rounded-2xl flex items-center justify-center mx-auto mb-3 p-1.5 shadow-sm overflow-hidden">
+            <img
+              src={brandLogo}
+              alt="Brand 4 Less"
+              className="w-full h-full object-contain rounded-xl"
+            />
           </div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Brand 4 Less</h1>
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Brands 4 Less</h1>
           <p className="text-xs text-gray-400 mt-0.5 font-medium">Retail Management & POS Suite</p>
         </div>
 
@@ -171,10 +172,6 @@ export const LoginPage: React.FC = () => {
                 ⌫
               </button>
             </div>
-
-            <p className="text-[11px] text-center text-gray-400">
-              Demo PINs: Admin (<span className="text-gray-900 font-mono font-bold">1234</span>) | Manager (<span className="text-gray-900 font-mono font-bold">5678</span>) | Cashier (<span className="text-gray-900 font-mono font-bold">0000</span>)
-            </p>
           </div>
         ) : (
           /* USERNAME & PASSWORD FORM */
@@ -218,10 +215,6 @@ export const LoginPage: React.FC = () => {
             >
               {loading ? <span>Authenticating...</span> : <span>Sign In &rarr;</span>}
             </button>
-
-            <p className="text-[11px] text-center text-gray-400 pt-2">
-              Default Login: <span className="text-gray-900 font-mono font-bold">admin</span> / <span className="text-gray-900 font-mono font-bold">admin123</span>
-            </p>
           </form>
         )}
       </div>

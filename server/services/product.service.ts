@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import PDFDocument from 'pdfkit';
 import { generateInternalSku, formatQrPayload } from '../domain/sku-generator.js';
 import { AuditService } from './audit.service.js';
+import { getCode128BarWidths } from '../utils/code128.js';
 
 export interface CreateProductInput {
   name: string;
@@ -58,7 +59,7 @@ export class ProductService {
   static getProducts(filters?: { query?: string; categoryId?: string; origin?: string; page?: number; limit?: number }): { products: any[]; total: number } {
     const db = getDb();
     const page = filters?.page || 1;
-    const limit = filters?.limit || 50;
+    const limit = filters?.limit || 1000;
     const offset = (page - 1) * limit;
 
     let whereClause = 'WHERE p.is_active = 1';
@@ -106,23 +107,40 @@ export class ProductService {
       LIMIT ? OFFSET ?
     `;
 
-    const products = db.prepare(dataQuery).all(...params, limit, offset);
+    const products = db.prepare(dataQuery).all(...params, limit, offset) as any[];
 
-    // Fetch variants for each product
-    const getVariants = db.prepare(`
+    if (products.length === 0) {
+      return {
+        products: [],
+        total: countResult ? countResult.count : 0,
+      };
+    }
+
+    // Batch fetch all variants for retrieved products in a single indexed query to eliminate N+1 queries
+    const productIds = products.map((p) => p.id);
+    const placeholders = productIds.map(() => '?').join(',');
+    const variants = db.prepare(`
       SELECT * FROM product_variants 
-      WHERE product_id = ? AND is_active = 1
+      WHERE product_id IN (${placeholders}) AND is_active = 1
       ORDER BY color ASC, size ASC
-    `);
+    `).all(...productIds) as any[];
+
+    const variantMap = new Map<string, any[]>();
+    variants.forEach((v) => {
+      if (!variantMap.has(v.product_id)) {
+        variantMap.set(v.product_id, []);
+      }
+      variantMap.get(v.product_id)!.push(v);
+    });
 
     const enrichedProducts = products.map((prod: any) => ({
       ...prod,
-      variants: getVariants.all(prod.id),
+      variants: variantMap.get(prod.id) || [],
     }));
 
     return {
       products: enrichedProducts,
-      total: countResult.count,
+      total: countResult ? countResult.count : 0,
     };
   }
 
@@ -374,7 +392,7 @@ export class ProductService {
           JOIN categories c ON p.category_id = c.id
           WHERE p.category_id = ? AND v.is_active = 1 AND p.is_active = 1
           ORDER BY p.name ASC, v.size ASC
-          LIMIT 100
+          LIMIT 300
         `).all(cleanCat);
       }
 
@@ -392,7 +410,7 @@ export class ProductService {
         JOIN categories c ON p.category_id = c.id
         WHERE v.is_active = 1 AND p.is_active = 1
         ORDER BY p.name ASC, v.size ASC
-        LIMIT 100
+        LIMIT 300
       `).all();
     }
 
@@ -466,6 +484,33 @@ export class ProductService {
     `).all(wildcard, wildcard, wildcard, wildcard, wildcard, wildcard);
   }
 
+  /**
+   * Fast POS Barcode / SKU Direct Lookup (O(1) indexed query)
+   */
+  static scanBarcode(code: string): any {
+    const db = getDb();
+    const clean = (code || '').trim();
+    if (!clean) return null;
+
+    return (
+      db.prepare(`
+        SELECT 
+          v.*,
+          p.name as product_name,
+          p.brand,
+          p.origin,
+          p.image_url,
+          c.name as category_name,
+          c.icon_type as category_icon
+        FROM product_variants v
+        JOIN products p ON v.product_id = p.id
+        JOIN categories c ON p.category_id = c.id
+        WHERE (v.barcode = ? OR v.sku = ?) AND v.is_active = 1 AND p.is_active = 1
+        LIMIT 1
+      `).get(clean, clean) || null
+    );
+  }
+
   // ── STOCK ADJUSTMENT ────────────────────────────────────────────────────
   static adjustStock(
     variantId: string,
@@ -506,24 +551,33 @@ export class ProductService {
         userId
       );
 
-      // If damaged write-off, record to expense for accurate profit
+      // If damaged write-off, book the lost cost to an expense so profit stays
+      // accurate. The category is matched loosely and created if missing —
+      // renaming it must never make write-offs silently skip the P&L.
       if (movementType === 'DAMAGED_WRITE_OFF' && quantityChange < 0) {
-        const damageCat = db.prepare("SELECT id FROM expense_categories WHERE name LIKE '%Damage%' OR name LIKE '%Shrinkage%'").get() as { id: string } | undefined;
-        if (damageCat) {
-          const writeOffCost = Math.abs(quantityChange) * variant.cost_price;
-          if (writeOffCost > 0) {
-            db.prepare(`
-              INSERT INTO expenses (id, category_id, title, amount, payment_method, notes, user_id)
-              VALUES (?, ?, ?, ?, 'CASH', ?, ?)
-            `).run(
-              uuidv4(),
-              damageCat.id,
-              `Damaged Stock Write-off: ${variant.sku} (Qty: ${Math.abs(quantityChange)})`,
-              writeOffCost,
-              notes,
-              userId
-            );
+        const writeOffCost = Number((Math.abs(quantityChange) * variant.cost_price).toFixed(2));
+        if (writeOffCost > 0) {
+          let damageCat = db
+            .prepare("SELECT id FROM expense_categories WHERE name LIKE '%Damage%' OR name LIKE '%Shrinkage%' OR name LIKE '%Wastage%' OR name LIKE '%Write-off%'")
+            .get() as { id: string } | undefined;
+          if (!damageCat) {
+            const catId = uuidv4();
+            db.prepare(
+              "INSERT INTO expense_categories (id, name, description) VALUES (?, 'Inventory Shrinkage & Damage', 'Damaged or lost stock cost write-offs')"
+            ).run(catId);
+            damageCat = { id: catId };
           }
+          db.prepare(`
+            INSERT INTO expenses (id, category_id, title, amount, payment_method, notes, user_id)
+            VALUES (?, ?, ?, ?, 'CASH', ?, ?)
+          `).run(
+            uuidv4(),
+            damageCat.id,
+            `Damaged Stock Write-off: ${variant.sku} (Qty: ${Math.abs(quantityChange)})`,
+            writeOffCost,
+            notes,
+            userId
+          );
         }
       }
 
@@ -634,25 +688,18 @@ export class ProductService {
           doc.fontSize(6.5).font('Helvetica').fillColor('#334155');
           doc.text(variantText || 'Standard', x + 5, y + 25, { width: labelWidth - 10 });
 
-          // Barcode Pattern Vector Bars
+          // Standard Code 128 Barcode Pattern Vector Bars
           const code = (item.barcode || item.sku || '000000').toUpperCase();
-          const barPattern: number[] = [2, 1, 1, 2, 3, 2];
-          for (let i = 0; i < code.length; i++) {
-            const charCode = code.charCodeAt(i);
-            barPattern.push((charCode % 3) + 1, ((charCode >> 1) % 2) + 1, ((charCode >> 2) % 3) + 1);
-          }
-          barPattern.push(2, 3, 3, 1, 1, 2);
-
-          const totalUnits = barPattern.reduce((a, b) => a + b, 0);
+          const { widths, totalModules } = getCode128BarWidths(code);
           const barAreaWidth = labelWidth - 20;
-          const unitW = barAreaWidth / totalUnits;
+          const unitW = barAreaWidth / Math.max(1, totalModules);
           let curX = x + 10;
           const barY = y + 36;
           const barHeight = 26;
           let isBar = true;
 
           doc.fillColor('#000000');
-          barPattern.forEach((w) => {
+          widths.forEach((w) => {
             const wPt = w * unitW;
             if (isBar) {
               doc.rect(curX, barY, Math.max(0.6, wPt), barHeight).fill();
@@ -701,30 +748,23 @@ export class ProductService {
           doc.fontSize(6).font('Helvetica');
           doc.text(variantText || 'Std', 6, 25, { width: w - 12 });
 
-          // Barcode bars
+          // Standard Code 128 Barcode bars
           const code = (item.barcode || item.sku || '000000').toUpperCase();
-          const barPattern: number[] = [2, 1, 1, 2, 3, 2];
-          for (let i = 0; i < code.length; i++) {
-            const charCode = code.charCodeAt(i);
-            barPattern.push((charCode % 3) + 1, ((charCode >> 1) % 2) + 1, ((charCode >> 2) % 3) + 1);
-          }
-          barPattern.push(2, 3, 3, 1, 1, 2);
-
-          const totalUnits = barPattern.reduce((a, b) => a + b, 0);
+          const { widths, totalModules } = getCode128BarWidths(code);
           const barAreaWidth = w - 20;
-          const unitW = barAreaWidth / totalUnits;
+          const unitW = barAreaWidth / Math.max(1, totalModules);
           let curX = 10;
           const barY = 34;
           const barHeight = 24;
           let isBar = true;
 
           doc.fillColor('#000000');
-          barPattern.forEach((bw) => {
+          widths.forEach((bw) => {
             const wPt = bw * unitW;
             if (isBar) {
               doc.rect(curX, barY, Math.max(0.6, wPt), barHeight).fill();
             }
-            curX += bwPt;
+            curX += wPt;
             isBar = !isBar;
           });
 

@@ -24,12 +24,14 @@ import { BarcodeLabelModal, BarcodeItem } from '../components/common/BarcodeLabe
 
 export const InventoryPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [categories, setCategories] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'ALL' | 'LOW_STOCK'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [loading, setLoading] = useState(true);
+  const [displayCount, setDisplayCount] = useState<number>(40);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -48,7 +50,7 @@ export const InventoryPage: React.FC = () => {
   const [newProduct, setNewProduct] = useState({
     name: '',
     categoryId: '',
-    brand: 'Brand 4 Less',
+    brand: 'Brands 4 Less',
     origin: 'Local' as 'Local' | 'Imported',
     description: '',
     variants: [
@@ -74,12 +76,16 @@ export const InventoryPage: React.FC = () => {
     setLoading(true);
     try {
       const [prodRes, catRes, lowRes] = await Promise.all([
-        api.get(`/products?query=${encodeURIComponent(searchQuery)}&categoryId=${selectedCategory}`),
+        api.get(`/products?query=${encodeURIComponent(searchQuery)}&categoryId=${selectedCategory}&limit=2000`),
         api.get('/categories'),
         api.get('/products/low-stock'),
       ]);
 
-      if (prodRes.products) setProducts(prodRes.products);
+      if (prodRes.products) {
+        setProducts(prodRes.products);
+        setDisplayCount(40);
+      }
+      if (typeof prodRes.total === 'number') setTotalCount(prodRes.total);
       if (catRes.categories) setCategories(catRes.categories);
       if (lowRes.items) setLowStockItems(lowRes.items);
     } catch (e) {
@@ -90,8 +96,20 @@ export const InventoryPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchInventory();
+    const timer = setTimeout(() => {
+      fetchInventory();
+    }, 250);
+    return () => clearTimeout(timer);
   }, [searchQuery, selectedCategory]);
+
+  const handleTableScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 300) {
+      if (displayCount < products.length) {
+        setDisplayCount((prev) => Math.min(prev + 40, products.length));
+      }
+    }
+  };
 
   const handleAddVariantRow = () => {
     setNewProduct((prev) => ({
@@ -124,7 +142,7 @@ export const InventoryPage: React.FC = () => {
       setNewProduct({
         name: '',
         categoryId: '',
-        brand: 'Brand 4 Less',
+        brand: 'Brands 4 Less',
         origin: 'Local',
         description: '',
         variants: [
@@ -141,7 +159,7 @@ export const InventoryPage: React.FC = () => {
       id: prod.id,
       name: prod.name,
       categoryId: prod.category_id,
-      brand: prod.brand || 'Brand 4 Less',
+      brand: prod.brand || 'Brands 4 Less',
       origin: (prod.origin || 'Local') as any,
       description: prod.description || '',
       variants: (prod.variants || []).map((v: any) => ({
@@ -168,6 +186,33 @@ export const InventoryPage: React.FC = () => {
         { color: 'Navy', size: 'XL', costPrice: 1000, sellingPrice: 1800, stockQuantity: 0, minStockLevel: 3 },
       ],
     });
+  };
+
+  const handleRemoveEditVariantRow = (idx: number) => {
+    if (!editProduct || editProduct.variants.length <= 1) return;
+    setEditProduct({
+      ...editProduct,
+      variants: editProduct.variants.filter((_, i) => i !== idx),
+    });
+  };
+
+  const handleDeleteProduct = async (productId?: string) => {
+    const idToDelete = productId || editProduct?.id;
+    if (!idToDelete) return;
+
+    const confirmDelete = window.confirm(
+      'Are you sure you want to delete this product and all its variants? This action cannot be undone.'
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await api.delete(`/products/${idToDelete}`);
+      setIsEditModalOpen(false);
+      setEditProduct(null);
+      fetchInventory();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete product');
+    }
   };
 
   const handleUpdateProduct = async (e: React.FormEvent) => {
@@ -259,17 +304,17 @@ export const InventoryPage: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-[#F8FAFC] dark:bg-[#090D16] p-8 overflow-y-auto space-y-6 font-sans transition-colors">
+    <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] dark:bg-[#090D16] p-6 min-w-0 font-sans transition-colors overflow-hidden">
       {/* Top Header & Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 flex-shrink-0 pb-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
+          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
             <span>Product Catalog & Inventory</span>
             <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
-              {products.length} Products
+              {totalCount || products.length} Products
             </span>
           </h1>
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 font-medium">
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-medium">
             Manage multi-variant garments, accessories, edit product details, adjust stock, and generate scannable barcode sticker sheets
           </p>
         </div>
@@ -301,8 +346,8 @@ export const InventoryPage: React.FC = () => {
       </div>
 
       {/* Filter Tabs & Search Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-[#111827] p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 soft-shadow transition-colors">
-        <div className="flex space-x-2">
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-[#111827] p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 soft-shadow transition-colors mb-4 flex-shrink-0">
+        <div className="flex items-center space-x-3">
           <button
             onClick={() => setActiveTab('ALL')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
@@ -311,11 +356,11 @@ export const InventoryPage: React.FC = () => {
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
-            All Products ({products.length})
+            All Products ({totalCount || products.length})
           </button>
           <button
             onClick={() => setActiveTab('LOW_STOCK')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
               activeTab === 'LOW_STOCK'
                 ? 'bg-amber-500 text-white'
                 : 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
@@ -355,10 +400,10 @@ export const InventoryPage: React.FC = () => {
 
       {/* ── PRODUCTS TABLE ───────────────────────────────────────────────── */}
       {activeTab === 'ALL' ? (
-        <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors">
-          <div className="overflow-x-auto">
+        <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors flex-1 flex flex-col min-h-0">
+          <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0" onScroll={handleTableScroll}>
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+              <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                 <tr>
                   <th className="p-4">Product Details</th>
                   <th className="p-4">Category</th>
@@ -377,7 +422,7 @@ export const InventoryPage: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  products.map((prod) => (
+                  products.slice(0, displayCount).map((prod) => (
                     <tr key={prod.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition">
                       <td className="p-4">
                         <div className="flex items-center space-x-3">
@@ -404,7 +449,7 @@ export const InventoryPage: React.FC = () => {
                       </td>
 
                       <td className="p-4 text-slate-700 dark:text-slate-300">
-                        <div className="font-medium">{prod.brand || 'Brand 4 Less'}</div>
+                        <div className="font-medium">{prod.brand || 'Brands 4 Less'}</div>
                         <span className={`text-[9px] font-black px-1.5 py-0.2 rounded uppercase inline-block mt-0.5 ${
                           prod.origin === 'Imported'
                             ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400'
@@ -440,18 +485,18 @@ export const InventoryPage: React.FC = () => {
                           : `PKR ${Number(prod.min_price || 0).toLocaleString()} - ${Number(prod.max_price || 0).toLocaleString()}`}
                       </td>
 
-                      <td className="p-4 text-right">
-                        <div className="flex items-center justify-end space-x-1.5">
+                      <td className="p-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => printSingleProductBarcodes(prod)}
                             title="Print Barcode Stickers"
-                            className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-950 dark:hover:bg-white hover:text-white dark:hover:text-slate-950 text-slate-700 dark:text-slate-300 transition"
+                            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-950 dark:hover:bg-white hover:text-white dark:hover:text-slate-950 text-slate-700 dark:text-slate-300 transition"
                           >
                             <Barcode className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => openEditModal(prod)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs transition flex items-center space-x-1 shadow-2xs"
+                            className="px-3.5 py-1.5 rounded-xl bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-2xs"
                           >
                             <Edit2 className="w-3 h-3" />
                             <span>Edit</span>
@@ -463,14 +508,30 @@ export const InventoryPage: React.FC = () => {
                                 setIsAdjustModalOpen(true);
                               }
                             }}
-                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs transition"
+                            className="px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs transition"
                           >
                             Adjust
                           </button>
+                          {hasRole('ADMIN') && (
+                            <button
+                              onClick={() => handleDeleteProduct(prod.id)}
+                              title="Delete Product"
+                              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
                   ))
+                )}
+                {products.length > displayCount && (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center text-slate-400 dark:text-slate-500 font-medium text-xs bg-slate-50/50 dark:bg-slate-800/30">
+                      Showing {displayCount} of {products.length} products. Scroll down to load more...
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -478,8 +539,8 @@ export const InventoryPage: React.FC = () => {
         </div>
       ) : (
         /* LOW STOCK ALERTS VIEW */
-        <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors">
-          <div className="p-4 bg-amber-50/60 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/50 flex items-center justify-between">
+        <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors flex-1 flex flex-col min-h-0">
+          <div className="p-4 bg-amber-50/60 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/50 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center space-x-2 text-amber-800 dark:text-amber-400 font-bold text-xs">
               <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               <span>Products Requiring Immediate Reorder</span>
@@ -487,8 +548,9 @@ export const InventoryPage: React.FC = () => {
             <span className="text-xs text-amber-700 dark:text-amber-400 font-semibold">{lowStockItems.length} items low in stock</span>
           </div>
 
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+          <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10">
               <tr>
                 <th className="p-4">Product Name</th>
                 <th className="p-4">SKU Code</th>
@@ -527,7 +589,8 @@ export const InventoryPage: React.FC = () => {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
@@ -623,17 +686,18 @@ export const InventoryPage: React.FC = () => {
                 </div>
 
                 <div className="max-h-56 overflow-y-auto space-y-2 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-                  <div className="grid grid-cols-6 gap-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase px-1">
-                    <span>Color</span>
-                    <span>Size</span>
-                    <span>Cost Price</span>
-                    <span>Selling Price</span>
-                    <span>Min Stock</span>
-                    <span>SKU Code</span>
+                  <div className="grid grid-cols-12 gap-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase px-1">
+                    <span className="col-span-2">Color</span>
+                    <span className="col-span-2">Size</span>
+                    <span className="col-span-2">Cost Price</span>
+                    <span className="col-span-2">Selling Price</span>
+                    <span className="col-span-1">Min Stock</span>
+                    <span className="col-span-2">SKU Code</span>
+                    <span className="col-span-1 text-center">Del</span>
                   </div>
 
                   {editProduct.variants.map((v, idx) => (
-                    <div key={idx} className="grid grid-cols-6 gap-2 items-center text-xs">
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center text-xs">
                       <input
                         type="text"
                         placeholder="Color"
@@ -643,7 +707,7 @@ export const InventoryPage: React.FC = () => {
                           updated[idx].color = e.target.value;
                           setEditProduct({ ...editProduct, variants: updated });
                         }}
-                        className="py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                        className="col-span-2 py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
                       />
                       <input
                         type="text"
@@ -654,7 +718,7 @@ export const InventoryPage: React.FC = () => {
                           updated[idx].size = e.target.value;
                           setEditProduct({ ...editProduct, variants: updated });
                         }}
-                        className="py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                        className="col-span-2 py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
                       />
                       <input
                         type="number"
@@ -665,7 +729,7 @@ export const InventoryPage: React.FC = () => {
                           updated[idx].costPrice = parseFloat(e.target.value) || 0;
                           setEditProduct({ ...editProduct, variants: updated });
                         }}
-                        className="py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                        className="col-span-2 py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
                       />
                       <input
                         type="number"
@@ -676,41 +740,65 @@ export const InventoryPage: React.FC = () => {
                           updated[idx].sellingPrice = parseFloat(e.target.value) || 0;
                           setEditProduct({ ...editProduct, variants: updated });
                         }}
-                        className="py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-bold"
+                        className="col-span-2 py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-bold"
                       />
                       <input
                         type="number"
-                        placeholder="Min Stock"
+                        placeholder="Min"
                         value={v.minStockLevel || ''}
                         onChange={(e) => {
                           const updated = [...editProduct.variants];
                           updated[idx].minStockLevel = parseInt(e.target.value, 10) || 3;
                           setEditProduct({ ...editProduct, variants: updated });
                         }}
-                        className="py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                        className="col-span-1 py-1.5 px-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white text-center"
                       />
-                      <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate px-1">
+                      <span className="col-span-2 font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate px-1">
                         {v.sku || 'Auto SKU'}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveEditVariantRow(idx)}
+                        disabled={editProduct.variants.length <= 1}
+                        title="Remove Variant"
+                        className="col-span-1 p-1 text-slate-400 hover:text-rose-600 transition disabled:opacity-30 text-center flex items-center justify-center"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsEditModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs shadow-md transition"
-                >
-                  Save Changes
-                </button>
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                <div>
+                  {hasRole('ADMIN') && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProduct(editProduct.id)}
+                      className="px-4 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800 font-bold text-xs transition flex items-center space-x-1.5 shadow-2xs"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete Product</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 rounded-xl bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs shadow-md transition"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </div>
             </form>
           </div>

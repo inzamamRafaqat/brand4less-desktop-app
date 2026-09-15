@@ -2,6 +2,7 @@ export type UserRole = 'ADMIN' | 'MANAGER' | 'STAFF';
 
 export type Permission =
   | 'POS_CHECKOUT'
+  | 'VIEW_SALES'
   | 'VIEW_PRODUCTS'
   | 'MANAGE_PRODUCTS'
   | 'DELETE_PRODUCTS'
@@ -31,6 +32,7 @@ export type Permission =
 const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ADMIN: [
     'POS_CHECKOUT',
+    'VIEW_SALES',
     'VIEW_PRODUCTS',
     'MANAGE_PRODUCTS',
     'DELETE_PRODUCTS',
@@ -59,6 +61,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   MANAGER: [
     'POS_CHECKOUT',
+    'VIEW_SALES',
     'VIEW_PRODUCTS',
     'MANAGE_PRODUCTS',
     'ADJUST_STOCK',
@@ -75,10 +78,13 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'APPLY_HIGH_DISCOUNT',
     'VIEW_EXPENSES',
     'MANAGE_EXPENSES',
+    'VIEW_SALARIES',
+    'APPROVE_SALARIES',
     'VIEW_FINANCIAL_REPORTS',
   ],
   STAFF: [
     'POS_CHECKOUT',
+    'VIEW_SALES',
     'VIEW_PRODUCTS',
     'VIEW_CUSTOMERS',
     'MANAGE_CUSTOMERS',

@@ -12,6 +12,16 @@ class ApiClient {
     return localStorage.getItem('brand4less_token');
   }
 
+  /**
+   * Builds a same-origin URL for a browser-native download (<a href> / download attr)
+   * that carries the auth token as a query param, since anchors cannot set headers.
+   */
+  downloadUrl(endpoint: string): string {
+    const token = this.getToken();
+    const sep = endpoint.includes('?') ? '&' : '?';
+    return `${API_BASE}${endpoint}${token ? `${sep}token=${encodeURIComponent(token)}` : ''}`;
+  }
+
   async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     const token = this.getToken();
     const headers: Record<string, string> = {

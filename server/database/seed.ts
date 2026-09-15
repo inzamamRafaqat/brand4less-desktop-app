@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { CONFIG } from '../config/index.js';
 
-export function seedDatabase(): void {
+export function seedDatabase(options?: { seedDemoData?: boolean }): void {
   const db = getDb();
 
   // 1. Seed Users (Admin & Staff)
@@ -13,14 +13,15 @@ export function seedDatabase(): void {
     const staffPasswordHash = bcrypt.hashSync('staff123', 10);
 
     const insertUser = db.prepare(`
-      INSERT INTO users (id, username, password_hash, pin_code, full_name, role, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO users (id, username, password_hash, pin_code, full_name, role, is_active, must_change_password)
+      VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     `);
 
-    insertUser.run(uuidv4(), 'admin', adminPasswordHash, '1234', 'System Administrator', 'ADMIN');
-    insertUser.run(uuidv4(), 'manager', adminPasswordHash, '5678', 'Store Manager', 'MANAGER');
-    insertUser.run(uuidv4(), 'cashier', staffPasswordHash, '0000', 'Front Desk Cashier', 'STAFF');
-    console.log('✅ Default users seeded (admin/admin123, manager/admin123, cashier/staff123)');
+    // PINs are stored as bcrypt hashes, same as passwords.
+    insertUser.run(uuidv4(), 'admin', adminPasswordHash, bcrypt.hashSync('1234', 10), 'System Administrator', 'ADMIN');
+    insertUser.run(uuidv4(), 'manager', adminPasswordHash, bcrypt.hashSync('5678', 10), 'Store Manager', 'MANAGER');
+    insertUser.run(uuidv4(), 'cashier', staffPasswordHash, bcrypt.hashSync('0000', 10), 'Front Desk Cashier', 'STAFF');
+    console.log('✅ Default users seeded with must_change_password=1 — CHANGE DEFAULT PASSWORDS (admin/admin123, manager/admin123, cashier/staff123)');
   }
 
   // 2. Seed Standard Categories with specific icon types and attribute requirements
@@ -83,37 +84,46 @@ export function seedDatabase(): void {
     console.log(`✅ ${expenseCats.length} expense categories seeded.`);
   }
 
-  // 4. Seed Default App Settings
-  const settingsCount = db.prepare('SELECT COUNT(*) as count FROM app_settings').get() as { count: number };
-  if (settingsCount.count === 0) {
-    const defaultSettings = [
-      { key: 'store_name', value: CONFIG.STORE_NAME, category: 'GENERAL', description: 'Store Business Name' },
-      { key: 'store_tagline', value: CONFIG.STORE_TAGLINE, category: 'GENERAL', description: 'Receipt Tagline' },
-      { key: 'store_address', value: CONFIG.STORE_ADDRESS, category: 'GENERAL', description: 'Physical Shop Address' },
-      { key: 'store_phone', value: CONFIG.STORE_PHONE, category: 'GENERAL', description: 'Contact Numbers' },
-      { key: 'currency', value: CONFIG.CURRENCY, category: 'FINANCIAL', description: 'Default Currency Symbol' },
-      { key: 'inventory_costing_method', value: 'WEIGHTED_AVERAGE', category: 'INVENTORY', description: 'Costing method: WEIGHTED_AVERAGE or FIFO' },
-      { key: 'staff_max_discount_percent', value: '10', category: 'POS', description: 'Max discount percentage staff can give without admin PIN' },
-      { key: 'thermal_printer_paper_width', value: '80mm', category: 'PRINTER', description: '80mm or 58mm thermal paper' },
-      { key: 'receipt_return_policy', value: CONFIG.RECEIPT_RETURN_POLICY, category: 'PRINTER', description: 'Footer return and exchange policy' },
-      { key: 'allow_negative_inventory_sales', value: 'false', category: 'POS', description: 'Disallow selling when stock is zero' },
-      { key: 'min_stock_alert_threshold', value: '3', category: 'INVENTORY', description: 'Low stock warning threshold' },
-      { key: 'auto_backup_enabled', value: 'true', category: 'SYSTEM', description: 'Automatic daily database backup' }
-    ];
+  // 4. Seed / Synchronize Default App Settings
+  const defaultSettings = [
+    { key: 'store_name', value: CONFIG.STORE_NAME, category: 'GENERAL', description: 'Store Business Name' },
+    { key: 'store_tagline', value: CONFIG.STORE_TAGLINE, category: 'GENERAL', description: 'Receipt Tagline' },
+    { key: 'store_address', value: CONFIG.STORE_ADDRESS, category: 'GENERAL', description: 'Physical Shop Address' },
+    { key: 'store_phone', value: CONFIG.STORE_PHONE, category: 'GENERAL', description: 'Contact Numbers' },
+    { key: 'currency', value: CONFIG.CURRENCY, category: 'FINANCIAL', description: 'Default Currency Symbol' },
+    { key: 'inventory_costing_method', value: 'WEIGHTED_AVERAGE', category: 'INVENTORY', description: 'Costing method: WEIGHTED_AVERAGE or FIFO' },
+    { key: 'staff_max_discount_percent', value: '10', category: 'POS', description: 'Max discount percentage staff can give without admin PIN' },
+    { key: 'thermal_printer_paper_width', value: '80mm', category: 'PRINTER', description: '80mm or 58mm thermal paper' },
+    { key: 'receipt_return_policy', value: CONFIG.RECEIPT_RETURN_POLICY, category: 'PRINTER', description: 'Footer return and exchange policy' },
+    { key: 'allow_negative_inventory_sales', value: 'false', category: 'POS', description: 'Disallow selling when stock is zero' },
+    { key: 'min_stock_alert_threshold', value: '3', category: 'INVENTORY', description: 'Low stock warning threshold' },
+    { key: 'auto_backup_enabled', value: 'true', category: 'SYSTEM', description: 'Automatic daily database backup' }
+  ];
 
-    const insertSetting = db.prepare(`
-      INSERT INTO app_settings (key, value, category, description)
-      VALUES (?, ?, ?, ?)
-    `);
+  const upsertSetting = db.prepare(`
+    INSERT INTO app_settings (key, value, category, description)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      category = excluded.category,
+      description = excluded.description
+  `);
 
-    for (const setting of defaultSettings) {
-      insertSetting.run(setting.key, setting.value, setting.category, setting.description);
+  for (const setting of defaultSettings) {
+    upsertSetting.run(setting.key, setting.value, setting.category, setting.description);
+  }
+  console.log(`✅ App settings synchronized.`);
+
+  // 6. Seed Initial Rich Product Catalog (Demo only when flag is set)
+  const shouldSeedDemo = Boolean(options?.seedDemoData || process.env.SEED_DEMO_DATA === 'true');
+  const productCount = db.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number };
+  if (!shouldSeedDemo) {
+    if (productCount.count === 0) {
+      console.log('ℹ️ Skipping demo catalog seed (set SEED_DEMO_DATA=true to populate sample inventory).');
     }
-    console.log(`✅ App settings initialized.`);
+    return;
   }
 
-  // 6. Seed Initial Rich Product Catalog
-  const productCount = db.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number };
   if (productCount.count === 0) {
     const categoriesList = db.prepare('SELECT id, name FROM categories').all() as { id: string; name: string }[];
     const categoryMap = new Map(categoriesList.map(c => [c.name, c.id]));
@@ -126,13 +136,13 @@ export function seedDatabase(): void {
     `);
 
     const insertVariant = db.prepare(`
-      INSERT INTO product_variants (id, product_id, sku, barcode, color, size, cost_price, selling_price, stock_quantity, min_stock_level, qr_code_payload, is_active)
+      INSERT INTO product_variants (id, product_id, sku, barcode, color, size, cost_price, selling_price, stock_quantity, min_stock_level, qr_code_data, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `);
 
     const insertStockMovement = db.prepare(`
-      INSERT INTO stock_movements (id, variant_id, movement_type, quantity_change, resulting_stock, unit_cost, reference_type, notes, user_id)
-      VALUES (?, ?, 'OPENING_STOCK', ?, ?, ?, 'MANUAL', 'Initial Store Opening Stock', ?)
+      INSERT INTO stock_movements (id, variant_id, movement_type, quantity_change, resulting_stock, cost_per_unit, reference_id, notes, user_id)
+      VALUES (?, ?, 'OPENING_STOCK', ?, ?, ?, 'OPENING', 'Initial Store Opening Stock', ?)
     `);
 
     const sampleCatalog = [

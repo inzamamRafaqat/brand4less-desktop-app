@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { calculatePeriodNetProfit } from '../domain/calculation.js';
 import { CONFIG } from '../config/index.js';
+import { sqlLocal, localNow, localDateStr, localMonthStr, localYearStr, localDaysAgoStr } from '../utils/time.js';
 
 export class ReportService {
   /**
@@ -10,27 +11,27 @@ export class ReportService {
    */
   static getDashboardSummary(): any {
     const db = getDb();
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const monthPrefix = todayStr.slice(0, 7);
+    const todayStr = localDateStr();
+    const monthPrefix = localMonthStr();
 
-    // 1. Today's metrics
+    // 1. Today's metrics (store-local day)
     const todaySales = db.prepare(`
-      SELECT 
+      SELECT
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as gross_profit,
         COUNT(id) as transaction_count
       FROM sales
-      WHERE created_at >= ? AND status != 'CANCELLED'
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
     `).get(`${todayStr} 00:00:00`) as any;
 
     // 2. Month-to-date metrics
     const monthSales = db.prepare(`
-      SELECT 
+      SELECT
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as gross_profit,
         COUNT(id) as transaction_count
       FROM sales
-      WHERE created_at >= ? AND status != 'CANCELLED'
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
     `).get(`${monthPrefix}-01 00:00:00`) as any;
 
     const monthExpenses = db.prepare(`
@@ -42,12 +43,29 @@ export class ReportService {
     const monthReturns = db.prepare(`
       SELECT COALESCE(SUM(total_refund_amount), 0) as total_returns
       FROM returns
-      WHERE created_at >= ?
+      WHERE ${sqlLocal('created_at')} >= ?
     `).get(`${monthPrefix}-01 00:00:00`) as { total_returns: number };
+
+    // Revenue / profit given back through returns in each window — the sale rows
+    // above still count these at full value, so net them out here.
+    const reversalSince = (fromTs: string) =>
+      db.prepare(`
+        SELECT
+          COALESCE(SUM(ri.subtotal), 0) as rev,
+          COALESCE(SUM(ri.quantity * ri.unit_cost), 0) as cogs
+        FROM return_items ri
+        JOIN returns r ON ri.return_id = r.id
+        WHERE ${sqlLocal('r.created_at')} >= ?
+      `).get(fromTs) as { rev: number; cogs: number };
+
+    const todayReversal = reversalSince(`${todayStr} 00:00:00`);
+    const monthReversal = reversalSince(`${monthPrefix}-01 00:00:00`);
+    const todayReturnsProfit = Number((todayReversal.rev - todayReversal.cogs).toFixed(2));
+    const monthReturnsProfit = Number((monthReversal.rev - monthReversal.cogs).toFixed(2));
 
     const monthNetProfit = calculatePeriodNetProfit(
       monthSales.gross_profit,
-      0, // Item costs already captured in sale profit
+      monthReturnsProfit, // margin handed back through returns this month
       monthExpenses.total_expenses,
       0 // Salaries already posted into expenses
     );
@@ -55,21 +73,55 @@ export class ReportService {
     // 3. Operational Balances
     const receivables = db.prepare('SELECT COALESCE(SUM(current_balance), 0) as total FROM customers WHERE current_balance > 0').get() as { total: number };
     const payables = db.prepare('SELECT COALESCE(SUM(current_payable), 0) as total FROM suppliers WHERE current_payable > 0').get() as { total: number };
+    const supplierAdvances = db.prepare('SELECT COALESCE(-SUM(current_payable), 0) as total FROM suppliers WHERE current_payable < 0').get() as { total: number };
     const lowStockCount = db.prepare('SELECT COUNT(*) as count FROM product_variants WHERE stock_quantity <= min_stock_level AND is_active = 1').get() as { count: number };
     const totalInventoryValue = db.prepare('SELECT COALESCE(SUM(stock_quantity * cost_price), 0) as cost_val, COALESCE(SUM(stock_quantity * selling_price), 0) as retail_val FROM product_variants WHERE is_active = 1').get() as any;
 
-    // 4. Last 7 Days Daily Sales Trend
-    const last7Days = db.prepare(`
-      SELECT 
-        substr(created_at, 1, 10) as sale_date,
+    // 4. Last 7 Days Daily Sales Trend (store-local days, guarantees all 7 calendar days)
+    const last7DaysRaw = db.prepare(`
+      SELECT
+        substr(${sqlLocal('created_at')}, 1, 10) as sale_date,
         COALESCE(SUM(net_total), 0) as daily_sales,
         COALESCE(SUM(total_profit), 0) as daily_profit,
         COUNT(id) as transactions
       FROM sales
-      WHERE created_at >= date('now', '-6 days') AND status != 'CANCELLED'
-      GROUP BY substr(created_at, 1, 10)
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
+      GROUP BY substr(${sqlLocal('created_at')}, 1, 10)
       ORDER BY sale_date ASC
-    `).all();
+    `).all(`${localDaysAgoStr(6)} 00:00:00`) as any[];
+
+    const last7DaysMap = new Map<string, any>();
+    for (const r of last7DaysRaw) {
+      last7DaysMap.set(r.sale_date, r);
+    }
+    const fullLast7Days: any[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const dStr = localDaysAgoStr(i);
+      const existing = last7DaysMap.get(dStr);
+      if (existing) {
+        fullLast7Days.push(existing);
+      } else {
+        fullLast7Days.push({
+          sale_date: dStr,
+          daily_sales: 0,
+          daily_profit: 0,
+          transactions: 0,
+        });
+      }
+    }
+
+    const weekSales = db.prepare(`
+      SELECT
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as gross_profit,
+        COUNT(id) as transaction_count
+      FROM sales
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
+    `).get(`${localDaysAgoStr(6)} 00:00:00`) as any;
+
+    const weekReversal = reversalSince(`${localDaysAgoStr(6)} 00:00:00`);
+    const weekReturnsProfit = Number((weekReversal.rev - weekReversal.cogs).toFixed(2));
+    const weekNetProfit = Number((weekSales.gross_profit - weekReturnsProfit).toFixed(2));
 
     // 5. Top 5 Best Selling Products
     const topProducts = db.prepare(`
@@ -112,23 +164,38 @@ export class ReportService {
       name: s.party_name,
       initials: (s.party_name.split(' ').map((w: string) => w[0]).join('') || 'CU').slice(0, 2).toUpperCase(),
       item: s.item_title || 'Retail Apparel Item',
-      date: new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      date: new Date(
+        new Date(String(s.created_at).replace(' ', 'T') + 'Z').getTime() + CONFIG.STORE_TZ_OFFSET_HOURS * 3_600_000
+      ).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
       type: s.payment_method === 'KHATA' ? 'Khata' : 'Sale',
       amount: `PKR ${Number(s.amount).toLocaleString()}`,
     }));
 
-    // 7. Real 12-Month Sales Trend Data
-    const currentYear = new Date().getFullYear().toString();
+    // 7. Real 12-Month Sales Trend Data (store-local calendar)
+    const currentYear = localYearStr();
     const monthlySalesTrend = db.prepare(`
-      SELECT 
-        strftime('%m', created_at) as month_num,
+      SELECT
+        strftime('%m', ${sqlLocal('created_at')}) as month_num,
         COALESCE(SUM(net_total), 0) as total_sales,
         COALESCE(SUM(total_profit), 0) as total_profit
       FROM sales
-      WHERE strftime('%Y', created_at) = ? AND status != 'CANCELLED'
-      GROUP BY strftime('%m', created_at)
+      WHERE strftime('%Y', ${sqlLocal('created_at')}) = ? AND status != 'CANCELLED'
+      GROUP BY strftime('%m', ${sqlLocal('created_at')})
       ORDER BY month_num ASC
     `).all(currentYear) as any[];
+
+    // 7b. Real 5-Year Sales Trend Data
+    const yearlySalesTrend = db.prepare(`
+      SELECT
+        strftime('%Y', ${sqlLocal('created_at')}) as year_num,
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as total_profit
+      FROM sales
+      WHERE status != 'CANCELLED'
+      GROUP BY strftime('%Y', ${sqlLocal('created_at')})
+      ORDER BY year_num ASC
+      LIMIT 5
+    `).all() as any[];
 
     // 8. Real Category Revenue Distribution Mix
     const categoryMix = db.prepare(`
@@ -144,29 +211,58 @@ export class ReportService {
       LIMIT 5
     `).all() as any[];
 
+    // Year-to-date calculation
+    const yearSales = db.prepare(`
+      SELECT
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as gross_profit,
+        COUNT(id) as transaction_count
+      FROM sales
+      WHERE strftime('%Y', ${sqlLocal('created_at')}) = ? AND status != 'CANCELLED'
+    `).get(currentYear) as any;
+
+    const yearReversal = reversalSince(`${currentYear}-01-01 00:00:00`);
+    const yearReturnsProfit = Number((yearReversal.rev - yearReversal.cogs).toFixed(2));
+    const yearNetProfit = Number((yearSales.gross_profit - yearReturnsProfit).toFixed(2));
+
     return {
       today: {
-        sales: todaySales.total_sales,
-        grossProfit: todaySales.gross_profit,
+        sales: Number((todaySales.total_sales - todayReversal.rev).toFixed(2)),
+        grossProfit: Number((todaySales.gross_profit - todayReturnsProfit).toFixed(2)),
         transactions: todaySales.transaction_count,
       },
+      thisWeek: {
+        sales: Number((weekSales.total_sales - weekReversal.rev).toFixed(2)),
+        grossProfit: weekNetProfit,
+        netProfit: weekNetProfit,
+        transactions: weekSales.transaction_count,
+      },
       thisMonth: {
-        sales: monthSales.total_sales,
-        grossProfit: monthSales.gross_profit,
+        sales: Number((monthSales.total_sales - monthReversal.rev).toFixed(2)),
+        grossProfit: Number((monthSales.gross_profit - monthReturnsProfit).toFixed(2)),
         expenses: monthExpenses.total_expenses,
         returns: monthReturns.total_returns,
         netProfit: monthNetProfit.netOperatingProfit,
         transactions: monthSales.transaction_count,
       },
+      thisYear: {
+        sales: Number((yearSales.total_sales - yearReversal.rev).toFixed(2)),
+        grossProfit: yearNetProfit,
+        netProfit: yearNetProfit,
+        transactions: yearSales.transaction_count,
+      },
       operational: {
         customerReceivables: receivables.total,
         supplierPayables: payables.total,
+        supplierAdvances: supplierAdvances.total,
         lowStockCount: lowStockCount.count,
         inventoryCostValue: totalInventoryValue.cost_val,
         inventoryRetailValue: totalInventoryValue.retail_val,
       },
-      salesTrend: last7Days,
+      salesTrend: fullLast7Days,
+      weeklySalesTrend: fullLast7Days,
       monthlySalesTrend,
+      yearlySalesTrend,
       categoryMix,
       recentActivities,
       topProducts,
@@ -186,19 +282,19 @@ export class ReportService {
     const retParams: any[] = [];
 
     if (startDate) {
-      salesWhere += ' AND s.created_at >= ?';
+      salesWhere += ` AND ${sqlLocal('s.created_at')} >= ?`;
       salesParams.push(`${startDate} 00:00:00`);
       expWhere += ' AND e.expense_date >= ?';
       expParams.push(startDate);
-      retWhere += ' AND r.created_at >= ?';
+      retWhere += ` AND ${sqlLocal('r.created_at')} >= ?`;
       retParams.push(`${startDate} 00:00:00`);
     }
     if (endDate) {
-      salesWhere += ' AND s.created_at <= ?';
+      salesWhere += ` AND ${sqlLocal('s.created_at')} <= ?`;
       salesParams.push(`${endDate} 23:59:59`);
       expWhere += ' AND e.expense_date <= ?';
       expParams.push(endDate);
-      retWhere += ' AND r.created_at <= ?';
+      retWhere += ` AND ${sqlLocal('r.created_at')} <= ?`;
       retParams.push(`${endDate} 23:59:59`);
     }
 
@@ -220,6 +316,23 @@ export class ReportService {
       ${retWhere}
     `).get(...retParams) as { total_returns: number };
 
+    // A return reverses part of a past sale. The sale rows above still carry
+    // their full value (status is only flagged, never CANCELLED), so the
+    // period's returns must be netted back out of revenue, COGS and profit —
+    // attributed by return date, not the original sale date.
+    const returnsReversal = db.prepare(`
+      SELECT
+        COALESCE(SUM(ri.subtotal), 0) as returns_revenue,
+        COALESCE(SUM(ri.quantity * ri.unit_cost), 0) as returns_cogs
+      FROM return_items ri
+      JOIN returns r ON ri.return_id = r.id
+      ${retWhere}
+    `).get(...retParams) as { returns_revenue: number; returns_cogs: number };
+
+    const returnsRevenue = Number(returnsReversal.returns_revenue.toFixed(2));
+    const returnsCogs = Number(returnsReversal.returns_cogs.toFixed(2));
+    const returnsProfitReversal = Number((returnsRevenue - returnsCogs).toFixed(2));
+
     // Expenses breakdown by category
     const expensesByCategory = db.prepare(`
       SELECT 
@@ -234,9 +347,17 @@ export class ReportService {
 
     const totalExpenses = expensesByCategory.reduce((sum, c) => sum + c.category_total, 0);
 
-    const netOperatingProfit = Number((salesTotals.gross_profit - totalExpenses).toFixed(2));
-    const grossMarginPercent = salesTotals.net_sales > 0 ? Number(((salesTotals.gross_profit / salesTotals.net_sales) * 100).toFixed(1)) : 0;
-    const netMarginPercent = salesTotals.net_sales > 0 ? Number(((netOperatingProfit / salesTotals.net_sales) * 100).toFixed(1)) : 0;
+    const netSales = Number((salesTotals.net_sales - returnsRevenue).toFixed(2));
+    const cogs = Number((salesTotals.total_cogs - returnsCogs).toFixed(2));
+    const grossProfit = Number((salesTotals.gross_profit - returnsProfitReversal).toFixed(2));
+    const netOperatingProfit = Number((grossProfit - totalExpenses).toFixed(2));
+
+    // Margin % is measured against the shop's own revenue, i.e. net of sales
+    // tax collected on behalf of the government. (Returns' tax share is not
+    // stripped here — immaterial, and zero when no tax is charged.)
+    const revenueExTax = Math.max(0, Number((netSales - salesTotals.total_tax).toFixed(2)));
+    const grossMarginPercent = revenueExTax > 0 ? Number(((grossProfit / revenueExTax) * 100).toFixed(1)) : 0;
+    const netMarginPercent = revenueExTax > 0 ? Number(((netOperatingProfit / revenueExTax) * 100).toFixed(1)) : 0;
 
     return {
       period: { startDate: startDate || 'All Time', endDate: endDate || 'Current' },
@@ -244,13 +365,21 @@ export class ReportService {
         grossSales: salesTotals.gross_sales,
         discounts: salesTotals.total_discounts,
         tax: salesTotals.total_tax,
-        netSales: salesTotals.net_sales,
-        cogs: salesTotals.total_cogs,
-        grossProfit: salesTotals.gross_profit,
+        // Net of returns booked in the period.
+        netSales,
+        cogs,
+        grossProfit,
         grossMarginPercent,
+        // Pre-returns figures, kept for drill-down.
+        netSalesBeforeReturns: salesTotals.net_sales,
+        cogsBeforeReturns: salesTotals.total_cogs,
+        grossProfitBeforeReturns: salesTotals.gross_profit,
       },
       returns: {
         totalReturnsAmount: returnsTotals.total_returns,
+        revenueReversed: returnsRevenue,
+        cogsReversed: returnsCogs,
+        profitReversed: returnsProfitReversal,
       },
       expenses: {
         breakdown: expensesByCategory,
@@ -276,11 +405,11 @@ export class ReportService {
     const params: any[] = [];
 
     if (filters?.startDate) {
-      whereClause += ' AND s.created_at >= ?';
+      whereClause += ` AND ${sqlLocal('s.created_at')} >= ?`;
       params.push(`${filters.startDate} 00:00:00`);
     }
     if (filters?.endDate) {
-      whereClause += ' AND s.created_at <= ?';
+      whereClause += ` AND ${sqlLocal('s.created_at')} <= ?`;
       params.push(`${filters.endDate} 23:59:59`);
     }
     if (filters?.paymentMethod) {
@@ -345,11 +474,11 @@ export class ReportService {
       params.push(filters.movementType);
     }
     if (filters?.startDate) {
-      whereClause += ' AND m.created_at >= ?';
+      whereClause += ` AND ${sqlLocal('m.created_at')} >= ?`;
       params.push(`${filters.startDate} 00:00:00`);
     }
     if (filters?.endDate) {
-      whereClause += ' AND m.created_at <= ?';
+      whereClause += ` AND ${sqlLocal('m.created_at')} <= ?`;
       params.push(`${filters.endDate} 23:59:59`);
     }
 
@@ -466,6 +595,6 @@ export class ReportService {
       });
     });
 
-    return (await workbook.xlsx.writeBuffer()) as Buffer;
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 }

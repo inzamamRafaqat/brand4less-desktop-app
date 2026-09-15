@@ -20,9 +20,13 @@ import {
   Sparkles,
   ArrowUpRight,
   Filter,
+  ArrowRightLeft,
+  Plus,
+  RefreshCw,
 } from 'lucide-react';
 import { ThermalReceiptModal } from '../components/common/ThermalReceiptModal';
 import { CategoryAvatar } from '../components/common/CategoryAvatar';
+import { ReturnExchangeModal } from '../components/common/ReturnExchangeModal';
 
 export const SalesPage: React.FC = () => {
   const [sales, setSales] = useState<any[]>([]);
@@ -34,10 +38,45 @@ export const SalesPage: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Tab & Returns State
+  const [activeTab, setActiveTab] = useState<'SALES' | 'RETURNS'>('SALES');
+  const [returnsList, setReturnsList] = useState<any[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [selectedReturnForDetails, setSelectedReturnForDetails] = useState<any>(null);
+
   // Modals
   const [selectedSaleForDetails, setSelectedSaleForDetails] = useState<any>(null);
   const [receiptData, setReceiptData] = useState<any>(null);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [selectedSaleForReturn, setSelectedSaleForReturn] = useState<any>(null);
+
+  const fetchReturns = async () => {
+    setReturnsLoading(true);
+    try {
+      const res = await api.get('/returns?limit=100');
+      if (res.returns) {
+        setReturnsList(res.returns);
+      }
+    } catch (e) {
+      console.error('Failed to load returns history:', e);
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
+  const handleOpenReturnDetails = async (ret: any) => {
+    try {
+      const res = await api.get(`/returns/${ret.id}`);
+      if (res.return) {
+        setSelectedReturnForDetails(res.return);
+      } else {
+        setSelectedReturnForDetails(ret);
+      }
+    } catch {
+      setSelectedReturnForDetails(ret);
+    }
+  };
 
   const fetchSales = async () => {
     setLoading(true);
@@ -61,6 +100,10 @@ export const SalesPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchReturns();
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -126,19 +169,51 @@ export const SalesPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
             <Receipt className="w-6 h-6 text-slate-900 dark:text-white" />
-            <span>Sales & Order History</span>
+            <span>Sales & Returns Center</span>
             <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
-              {totalCount} Orders
+              {totalCount} Orders • {returnsList.length} Returns
             </span>
           </h1>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 font-medium">
-            Review completed retail customer transactions, customer Khata charges, and reprint thermal receipts
+            Review completed customer transactions, reprint thermal receipts, and audit 48-hour returns & exchanges
           </p>
         </div>
       </div>
 
-      {/* ── KPI STAT CARDS ───────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* ── MODULE SUB-NAVIGATION TABS ───────────────────────────────────── */}
+      <div className="flex items-center space-x-2 border-b border-slate-200/80 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => setActiveTab('SALES')}
+          className={`flex items-center space-x-2 px-5 py-2.5 rounded-2xl text-xs font-black transition ${
+            activeTab === 'SALES'
+              ? 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 shadow-sm'
+              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200/80 dark:border-slate-800'
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Sales Orders & Invoices ({totalCount})</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('RETURNS');
+            fetchReturns();
+          }}
+          className={`flex items-center space-x-2 px-5 py-2.5 rounded-2xl text-xs font-black transition ${
+            activeTab === 'RETURNS'
+              ? 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 shadow-sm'
+              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200/80 dark:border-slate-800'
+          }`}
+        >
+          <ArrowRightLeft className="w-4 h-4" />
+          <span>Returns & Exchanges Record ({returnsList.length})</span>
+        </button>
+      </div>
+
+      {activeTab === 'SALES' && (
+        <>
+          {/* ── KPI STAT CARDS ───────────────────────────────────────────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow transition-colors">
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Filtered Sales</span>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
@@ -233,15 +308,26 @@ export const SalesPage: React.FC = () => {
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
+
+            <button
+              onClick={() => {
+                setSelectedSaleForReturn(null);
+                setIsReturnModalOpen(true);
+              }}
+              className="px-3 py-1.5 bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs rounded-lg transition flex items-center space-x-1.5 shadow-2xs shrink-0"
+            >
+              <ArrowRightLeft className="w-3.5 h-3.5" />
+              <span>Return / Exchange</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* ── SALES ORDERS TABLE ───────────────────────────────────────────── */}
-      <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors">
-        <div className="overflow-x-auto">
+      <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors flex flex-col">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
               <tr>
                 <th className="p-4">Invoice #</th>
                 <th className="p-4">Date & Time</th>
@@ -369,6 +455,161 @@ export const SalesPage: React.FC = () => {
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {/* ── RETURNS & EXCHANGES RECORD TAB ────────────────────────────────── */}
+      {activeTab === 'RETURNS' && (
+        <div className="space-y-6">
+          {/* Returns KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow transition-colors">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Returns Logged</span>
+              <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+                {returnsList.length} Records
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1 block">Full return & exchange transactions</span>
+            </div>
+
+            <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow transition-colors">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Value Refunded</span>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                PKR {returnsList.reduce((acc, r) => acc + Number(r.total_refund_amount || 0), 0).toLocaleString()}
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1 block">Cash, Khata, & Exchange offsets</span>
+            </div>
+
+            <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow transition-colors">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Units Restocked</span>
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                {returnsList.reduce((acc, r) => acc + Number(r.total_items_count || 0), 0)} Units
+              </div>
+              <span className="text-[10px] text-slate-400 mt-1 block">Returned items restored to inventory</span>
+            </div>
+          </div>
+
+          {/* Action header bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-[#111827] p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 soft-shadow">
+            <div className="flex items-center space-x-2">
+              <ArrowRightLeft className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              <span className="font-bold text-sm text-slate-900 dark:text-white">Product Returns & Exchanges Ledger</span>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={fetchReturns}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition"
+                title="Refresh Returns"
+              >
+                <RefreshCw className={`w-4 h-4 ${returnsLoading ? 'animate-spin' : ''}`} />
+              </button>
+
+              <button
+                onClick={() => {
+                  setSelectedSaleForReturn(null);
+                  setIsReturnModalOpen(true);
+                }}
+                className="px-4 py-2 bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Process Return / Exchange</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Returns Table */}
+          <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors flex flex-col">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
+                  <tr>
+                    <th className="p-4">Return #</th>
+                    <th className="p-4">Original Invoice</th>
+                    <th className="p-4">Customer</th>
+                    <th className="p-4 text-center">Items</th>
+                    <th className="p-4">Refund Amount</th>
+                    <th className="p-4 text-center">Method</th>
+                    <th className="p-4">Reason</th>
+                    <th className="p-4">Staff / Cashier</th>
+                    <th className="p-4">Date & Time</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {returnsList.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="p-12 text-center text-slate-400 dark:text-slate-500">
+                        {returnsLoading ? 'Loading returns history...' : 'No returns or exchanges processed yet.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    returnsList.map((ret, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                        <td className="p-4 font-mono font-bold text-slate-900 dark:text-white">
+                          {ret.return_number}
+                        </td>
+                        <td className="p-4 font-mono text-slate-600 dark:text-slate-300">
+                          {ret.original_invoice_number || 'Direct Return'}
+                        </td>
+                        <td className="p-4">
+                          <span className="font-bold text-slate-900 dark:text-white block">
+                            {ret.customer_name || 'Walk-in Customer'}
+                          </span>
+                          {ret.customer_phone && (
+                            <span className="text-[10px] text-slate-400 font-mono">{ret.customer_phone}</span>
+                          )}
+                        </td>
+                        <td className="p-4 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {ret.total_items_count || 1}
+                        </td>
+                        <td className="p-4 font-mono font-black text-rose-600 dark:text-rose-400">
+                          PKR {Number(ret.total_refund_amount || 0).toLocaleString()}
+                        </td>
+                        <td className="p-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                            ret.refund_method === 'CASH'
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
+                              : ret.refund_method === 'KHATA_CREDIT'
+                              ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400'
+                              : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400'
+                          }`}>
+                            {ret.refund_method?.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-600 dark:text-slate-300 max-w-[180px] truncate" title={ret.reason}>
+                          {ret.reason || 'General Return'}
+                        </td>
+                        <td className="p-4 text-slate-500 dark:text-slate-400 font-medium">
+                          {ret.user_name || 'Staff'}
+                        </td>
+                        <td className="p-4 text-slate-400 dark:text-slate-500 font-mono text-[11px]">
+                          {new Date(ret.created_at).toLocaleString('en-US', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={() => handleOpenReturnDetails(ret)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition inline-flex items-center space-x-1"
+                            title="View Returned Items"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Items</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── ITEMIZED SALE DETAILS MODAL ──────────────────────────────────── */}
       {selectedSaleForDetails && (
@@ -441,6 +682,18 @@ export const SalesPage: React.FC = () => {
 
             <div className="flex justify-end space-x-3 pt-2">
               <button
+                type="button"
+                onClick={() => {
+                  setSelectedSaleForReturn(selectedSaleForDetails);
+                  setSelectedSaleForDetails(null);
+                  setIsReturnModalOpen(true);
+                }}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs rounded-xl transition flex items-center space-x-1.5 border border-slate-200 dark:border-slate-700"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                <span>Return / Exchange</span>
+              </button>
+              <button
                 onClick={() => {
                   handleOpenReceipt(selectedSaleForDetails);
                   setSelectedSaleForDetails(null);
@@ -455,11 +708,130 @@ export const SalesPage: React.FC = () => {
         </div>
       )}
 
+      {/* ── RETURN BREAKDOWN DETAILS MODAL ──────────────────────────────── */}
+      {selectedReturnForDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto font-sans">
+          <div className="bg-white dark:bg-[#111827] rounded-3xl w-full max-w-2xl p-6 shadow-2xl relative my-auto border border-slate-100 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400">
+                  <ArrowRightLeft className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Return Details #{selectedReturnForDetails.return_number}
+                  </h3>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    {new Date(selectedReturnForDetails.created_at).toLocaleString()} • Handled by: {selectedReturnForDetails.user_name || 'Staff'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedReturnForDetails(null)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Info grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase">Original Invoice</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  {selectedReturnForDetails.original_invoice_number || 'Direct Return'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase">Customer</span>
+                <span className="font-bold text-slate-900 dark:text-white truncate block">
+                  {selectedReturnForDetails.customer_name || 'Walk-in Customer'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase">Refund Method</span>
+                <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                  {selectedReturnForDetails.refund_method?.replace('_', ' ')}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase">Reason</span>
+                <span className="font-bold text-slate-900 dark:text-white truncate block">
+                  {selectedReturnForDetails.reason || 'General Return'}
+                </span>
+              </div>
+            </div>
+
+            {/* Returned Items List */}
+            <div>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-2 uppercase tracking-wider">
+                Returned Products Restocked to Inventory
+              </span>
+              <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 border border-slate-100 dark:border-slate-800 rounded-2xl">
+                {selectedReturnForDetails.items && selectedReturnForDetails.items.length > 0 ? (
+                  selectedReturnForDetails.items.map((item: any) => (
+                    <div key={item.id} className="p-3 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      <div>
+                        <h4 className="font-bold text-slate-900 dark:text-white">{item.product_name}</h4>
+                        <p className="text-slate-400 text-[10px] font-mono">
+                          {item.color ? `${item.color} ` : ''}{item.size ? `(${item.size}) ` : ''}• SKU: {item.sku}
+                        </p>
+                      </div>
+
+                      <div className="text-right font-mono">
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          {item.quantity} qty × PKR {Number(item.refund_unit_price).toLocaleString()}
+                        </div>
+                        <div className="text-rose-600 font-bold text-[11px]">
+                          = PKR {Number(item.subtotal || (item.quantity * item.refund_unit_price)).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-slate-400 text-xs">No itemized details recorded.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Total summary */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Total Refund Amount Issued</span>
+              <span className="font-mono font-black text-base text-rose-600 dark:text-rose-400">
+                PKR {Number(selectedReturnForDetails.total_refund_amount).toLocaleString()}
+              </span>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setSelectedReturnForDetails(null)}
+                className="px-6 py-2.5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-bold text-xs rounded-xl shadow-sm transition"
+              >
+                Close Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── THERMAL RECEIPT MODAL ────────────────────────────────────────── */}
       {isReceiptOpen && receiptData && (
         <ThermalReceiptModal
           receiptData={receiptData}
           onClose={() => setIsReceiptOpen(false)}
+        />
+      )}
+
+      {/* ── RETURN & EXCHANGE MODAL ──────────────────────────────────────── */}
+      {isReturnModalOpen && (
+        <ReturnExchangeModal
+          isOpen={isReturnModalOpen}
+          initialSale={selectedSaleForReturn}
+          onClose={() => {
+            setIsReturnModalOpen(false);
+            setSelectedSaleForReturn(null);
+          }}
+          onSuccess={() => {
+            fetchSales();
+            fetchReturns();
+          }}
         />
       )}
     </div>

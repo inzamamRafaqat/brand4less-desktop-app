@@ -188,7 +188,7 @@ npm run dev
 - **REST API Backend**: http://localhost:4000
 - **Health Check**: http://localhost:4000/api/health
 
-### 2. Run with Electron Desktop Shell
+### 2. Run with Electron Desktop Shell (development)
 ```bash
 npm run electron:dev
 ```
@@ -198,14 +198,48 @@ npm run electron:dev
 npm test
 ```
 
-### 4. Build Production Bundle
+### 4. Build & Run in Production
 ```bash
-npm run build:ui
+npm run build          # builds the React UI (dist/) and compiles the API server (dist-server/)
+npm run electron:start  # launches Electron; it boots the API in-process and serves the UI on 127.0.0.1
 ```
+In production the compiled API server (`dist-server/server.js`) also serves the built
+UI, so the whole app runs from a single loopback origin. The Electron main process
+starts and supervises that server automatically — there is no separate step.
+
+> Full installer packaging (electron-builder / code signing / auto-update) is not
+> yet configured and is tracked as follow-up work.
+
+---
+
+## 🔒 Security Notes (read before deploying)
+
+- **Change the default passwords and PINs immediately.** The seeded `admin` / `manager` / `cashier`
+  accounts exist only for first login.
+- The API binds to **`127.0.0.1` only** by default. Do not change `HOST` to `0.0.0.0`
+  unless you intend to expose the POS API to the local network.
+- Set a strong **`JWT_SECRET`** in the environment for any real deployment. If unset,
+  the server generates and persists one at `data/.jwt-secret` (fine for a single
+  machine, not for a shared/redeployable setup).
+- POS PINs and passwords are stored as bcrypt hashes. Login and PIN endpoints are
+  rate-limited / lockout-protected against brute force.
+- `data/` (the SQLite database, uploads, backups, and the JWT secret) is git-ignored
+  and must never be committed — it contains customer PII and financial records.
+
+### Environment variables
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `4000` | API + UI port |
+| `HOST` | `127.0.0.1` | API bind address |
+| `JWT_SECRET` | auto-generated | token signing secret |
+| `DATA_DIR` | `./data` | database / uploads / backups location |
+| `CORS_ORIGIN` | — | extra comma-separated allowed origins (dev only) |
 
 ---
 
 ## 🔑 Default Demo Accounts
+
+> ⚠️ These are **first-login credentials only**. Change every password and PIN before real use.
 
 | Account Role | Username | Password | Quick POS PIN | Permissions |
 |---|---|---|:---:|---|

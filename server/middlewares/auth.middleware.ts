@@ -9,6 +9,7 @@ export interface AuthenticatedUser {
   username: string;
   role: UserRole;
   fullName: string;
+  mustChangePassword?: boolean;
 }
 
 declare global {
@@ -21,7 +22,14 @@ declare global {
 
 export function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  // Header is the primary source. A `?token=` query param is accepted only as a
+  // fallback for browser-native downloads (<a href>) that cannot set headers.
+  const token =
+    authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : typeof req.query.token === 'string' && req.query.token
+        ? req.query.token
+        : null;
 
   if (!token) {
     res.status(401).json({ success: false, message: 'Authentication required. No token provided.' });
@@ -31,7 +39,7 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
   try {
     const decoded = jwt.verify(token, CONFIG.JWT_SECRET) as AuthenticatedUser;
     const db = getDb();
-    const user = db.prepare('SELECT id, username, role, full_name, is_active FROM users WHERE id = ?').get(decoded.id) as any;
+    const user = db.prepare('SELECT id, username, role, full_name, is_active, must_change_password FROM users WHERE id = ?').get(decoded.id) as any;
 
     if (!user || user.is_active !== 1) {
       res.status(403).json({ success: false, message: 'User account is inactive or no longer exists.' });
@@ -43,6 +51,7 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
       username: user.username,
       role: user.role as UserRole,
       fullName: user.full_name,
+      mustChangePassword: Boolean(user.must_change_password),
     };
 
     next();

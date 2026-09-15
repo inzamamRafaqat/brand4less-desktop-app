@@ -77,7 +77,7 @@ export const PaymentVoucherModal: React.FC<PaymentVoucherModalProps> = ({ data, 
         <div id="payment-voucher-area" className="space-y-6 text-gray-900">
           {/* Brand Header */}
           <div className="text-center pb-4 border-b-2 border-gray-900">
-            <h1 className="text-2xl font-black tracking-tight text-gray-950 uppercase">Brand 4 Less</h1>
+            <h1 className="text-2xl font-black tracking-tight text-gray-950 uppercase">Brands 4 Less</h1>
             <p className="text-xs text-gray-500 font-medium mt-0.5">
               Clothing & Fashion Accessories Retailer
             </p>

@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
 
 export function runMigrations(): void {
@@ -12,6 +13,7 @@ export function runMigrations(): void {
       pin_code TEXT,
       full_name TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('ADMIN', 'MANAGER', 'STAFF')),
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -319,6 +321,56 @@ export function runMigrations(): void {
     CREATE INDEX IF NOT EXISTS idx_stock_movements_variant_id ON stock_movements(variant_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
   `);
+
+  // ── Additive column migrations for already-provisioned databases ───────────
+  // CREATE TABLE IF NOT EXISTS above never alters an existing table, so columns
+  // added after a shop is live must be back-filled here.
+  const addColumnIfMissing = (table: string, column: string, definition: string): void => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  };
+
+  // Cash handed back to the customer when tender exceeds the amount owed. Kept
+  // separate so paid_amount never books more than the sale was actually worth.
+  addColumnIfMissing('sales', 'change_due', 'REAL NOT NULL DEFAULT 0.0');
+
+  // Value of goods traded in against this sale during an exchange. Counts toward
+  // payment sufficiency without being a cash/card tender line.
+  addColumnIfMissing('sales', 'exchange_credit', 'REAL NOT NULL DEFAULT 0.0');
+
+  // Forced password change gate flag for accounts initialized with default passwords.
+  addColumnIfMissing('users', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Flag seeded default accounts still using initial default passwords
+  const defaultAccounts = db
+    .prepare("SELECT id, username, password_hash, must_change_password FROM users WHERE username IN ('admin', 'manager', 'cashier')")
+    .all() as any[];
+  for (const acc of defaultAccounts) {
+    const defaultPw = acc.username === 'cashier' ? 'staff123' : 'admin123';
+    if (bcrypt.compareSync(defaultPw, acc.password_hash) && acc.must_change_password === 0) {
+      db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run(acc.id);
+    }
+  }
+
+  // ── Data migration: hash any legacy plaintext quick-POS PINs in place ──────
+  // Older builds stored `pin_code` as cleartext (e.g. "1234"). Anyone who could
+  // read the users table could then log in as that user. Upgrade them to bcrypt.
+  const legacyPins = db
+    .prepare("SELECT id, pin_code FROM users WHERE pin_code IS NOT NULL AND pin_code != '' AND pin_code NOT LIKE '$2%'")
+    .all() as { id: string; pin_code: string }[];
+
+  if (legacyPins.length > 0) {
+    const updatePin = db.prepare('UPDATE users SET pin_code = ? WHERE id = ?');
+    const tx = db.transaction((rows: { id: string; pin_code: string }[]) => {
+      for (const row of rows) {
+        updatePin.run(bcrypt.hashSync(String(row.pin_code).trim(), 10), row.id);
+      }
+    });
+    tx(legacyPins);
+    console.log(`🔐 Migrated ${legacyPins.length} plaintext POS PIN(s) to bcrypt hashes.`);
+  }
 
   console.log('✅ SQLite database schema & indexes verified successfully.');
 }

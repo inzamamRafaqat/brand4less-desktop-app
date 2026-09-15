@@ -16,8 +16,11 @@ import {
   UploadCloud,
   Receipt,
   Eye,
+  Trash2,
 } from 'lucide-react';
 import { PaymentVoucherModal, VoucherData } from '../components/common/PaymentVoucherModal';
+import { QuickVariantModal } from '../components/common/QuickVariantModal';
+import { SearchableVariantSelect } from '../components/common/SearchableVariantSelect';
 
 export const SuppliersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -31,6 +34,8 @@ export const SuppliersPage: React.FC = () => {
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [isNewPurchaseOpen, setIsNewPurchaseOpen] = useState(false);
   const [isPaySupplierOpen, setIsPaySupplierOpen] = useState(false);
+  const [isQuickVariantOpen, setIsQuickVariantOpen] = useState(false);
+  const [activeItemRowIdx, setActiveItemRowIdx] = useState<number>(0);
   const [activeVoucherData, setActiveVoucherData] = useState<VoucherData | null>(null);
 
   // New Supplier Form
@@ -62,30 +67,51 @@ export const SuppliersPage: React.FC = () => {
 
   const receiptInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchSuppliers = async () => {
-    setLoading(true);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const fetchSuppliers = async (resetPage = false) => {
+    if (resetPage) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+    
     try {
+      const targetPage = resetPage ? 1 : page;
       const [supRes, purRes] = await Promise.all([
-        api.get(`/suppliers?query=${encodeURIComponent(searchQuery)}`),
-        api.get('/purchases'),
+        api.get(`/suppliers?query=${encodeURIComponent(searchQuery)}&page=${targetPage}&limit=20`),
+        resetPage ? api.get('/purchases') : Promise.resolve({ purchases: null }),
       ]);
 
       if (supRes.suppliers) {
-        setSuppliers(supRes.suppliers);
-        if (!selectedSupplier && supRes.suppliers.length > 0) {
-          loadSupplierDetails(supRes.suppliers[0]);
+        if (resetPage) {
+          setSuppliers(supRes.suppliers);
+          if (!selectedSupplier && supRes.suppliers.length > 0) {
+            loadSupplierDetails(supRes.suppliers[0]);
+          }
+        } else {
+          setSuppliers((prev) => [...prev, ...supRes.suppliers]);
         }
+        setHasMore(supRes.suppliers.length === 20);
+        setPage(targetPage + 1);
       }
+      
       if (purRes.purchases) setPurchases(purRes.purchases);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchSuppliers();
+    const timer = setTimeout(() => {
+      fetchSuppliers(true);
+    }, 250);
+    return () => clearTimeout(timer);
   }, [searchQuery]);
 
   const loadSupplierDetails = async (sup: any) => {
@@ -100,7 +126,7 @@ export const SuppliersPage: React.FC = () => {
 
   const loadVariants = async () => {
     try {
-      const res = await api.get('/products?limit=200');
+      const res = await api.get('/products?limit=2000');
       if (res.products) {
         const variantsList: any[] = [];
         res.products.forEach((p: any) => {
@@ -272,7 +298,15 @@ export const SuppliersPage: React.FC = () => {
         </div>
 
         {/* Suppliers List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        <div 
+          className="flex-1 overflow-y-auto p-3 space-y-1.5"
+          onScroll={(e) => {
+            const target = e.target as HTMLDivElement;
+            if (target.scrollHeight - target.scrollTop <= target.clientHeight + 50 && hasMore && !loadingMore && !loading) {
+              fetchSuppliers(false);
+            }
+          }}
+        >
           {suppliers.map((s) => {
             const isSelected = selectedSupplier?.id === s.id;
             return (
@@ -312,6 +346,9 @@ export const SuppliersPage: React.FC = () => {
               </button>
             );
           })}
+          {loadingMore && (
+            <div className="text-center py-2 text-xs text-slate-500">Loading more...</div>
+          )}
         </div>
       </div>
 
@@ -502,27 +539,42 @@ export const SuppliersPage: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="max-h-40 overflow-y-auto space-y-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="max-h-48 overflow-y-auto space-y-2.5 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                  <div className="grid grid-cols-12 gap-2 text-[10px] font-bold text-slate-400 uppercase px-1">
+                    <span className="col-span-6">Product Variant</span>
+                    <span className="col-span-2 text-center">Quantity</span>
+                    <span className="col-span-3 text-right pr-2">Unit Cost (PKR)</span>
+                    <span className="col-span-1 text-center">Del</span>
+                  </div>
+
                   {purchaseData.items.map((item, idx) => (
-                    <div key={idx} className="grid grid-cols-7 gap-2 items-center text-xs">
-                      <div className="col-span-3">
-                        <select
-                          required
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center text-xs">
+                      <div className="col-span-6 flex items-center gap-1.5 min-w-0">
+                        <SearchableVariantSelect
+                          variants={allVariants}
                           value={item.variantId}
-                          onChange={(e) => {
+                          onChange={(vId, matched) => {
                             const updated = [...purchaseData.items];
-                            updated[idx].variantId = e.target.value;
+                            updated[idx].variantId = vId;
+                            if (matched && matched.costPrice) {
+                              updated[idx].unitCost = matched.costPrice;
+                            }
                             setPurchaseData({ ...purchaseData, items: updated });
                           }}
-                          className="w-full py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white text-xs"
+                          placeholder="Select Variant..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveItemRowIdx(idx);
+                            setIsQuickVariantOpen(true);
+                          }}
+                          title="Create New Variant"
+                          className="h-9 px-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1 border border-slate-200 dark:border-slate-700 shadow-2xs"
                         >
-                          <option value="">Select Variant...</option>
-                          {allVariants.map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.label}
-                            </option>
-                          ))}
-                        </select>
+                          <Plus className="w-3 h-3" />
+                          <span>New</span>
+                        </button>
                       </div>
 
                       <div className="col-span-2">
@@ -530,29 +582,49 @@ export const SuppliersPage: React.FC = () => {
                           type="number"
                           placeholder="Qty"
                           required
+                          min="1"
                           value={item.quantity || ''}
                           onChange={(e) => {
                             const updated = [...purchaseData.items];
                             updated[idx].quantity = parseInt(e.target.value, 10) || 0;
                             setPurchaseData({ ...purchaseData, items: updated });
                           }}
-                          className="w-full py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                          className="w-full h-9 px-2 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-bold text-xs focus:outline-none focus:ring-1 focus:ring-slate-950 dark:focus:ring-white"
                         />
                       </div>
 
-                      <div className="col-span-2">
+                      <div className="col-span-3">
                         <input
                           type="number"
                           placeholder="Unit Cost"
                           required
+                          min="0"
                           value={item.unitCost || ''}
                           onChange={(e) => {
                             const updated = [...purchaseData.items];
                             updated[idx].unitCost = parseFloat(e.target.value) || 0;
                             setPurchaseData({ ...purchaseData, items: updated });
                           }}
-                          className="w-full py-1.5 px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-bold"
+                          className="w-full h-9 px-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-bold text-xs focus:outline-none focus:ring-1 focus:ring-slate-950 dark:focus:ring-white text-right"
                         />
+                      </div>
+
+                      <div className="col-span-1 flex items-center justify-center">
+                        {purchaseData.items.length > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = purchaseData.items.filter((_, i) => i !== idx);
+                              setPurchaseData({ ...purchaseData, items: updated });
+                            }}
+                            title="Remove item row"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <span className="w-3.5 h-3.5" />
+                        )}
                       </div>
                     </div>
                   ))}
@@ -580,7 +652,7 @@ export const SuppliersPage: React.FC = () => {
                   <input
                     ref={receiptInputRef}
                     type="file"
-                    accept="image/*,.pdf"
+                    accept="image/*,.pdf,.xlsx,.xls,.doc,.docx,.csv"
                     onChange={handleFileUpload}
                     className="w-full text-xs text-slate-500 dark:text-slate-400 file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 dark:file:bg-slate-800 file:text-slate-800 dark:file:text-slate-200"
                   />
@@ -750,6 +822,21 @@ export const SuppliersPage: React.FC = () => {
           onClose={() => setActiveVoucherData(null)}
         />
       )}
+
+      {/* ── QUICK VARIANT MODAL ─────────────────────────────────────────── */}
+      <QuickVariantModal
+        isOpen={isQuickVariantOpen}
+        onClose={() => setIsQuickVariantOpen(false)}
+        onCreated={(newVar) => {
+          setAllVariants((prev) => [newVar, ...prev]);
+          const updated = [...purchaseData.items];
+          if (updated[activeItemRowIdx]) {
+            updated[activeItemRowIdx].variantId = newVar.id;
+            updated[activeItemRowIdx].unitCost = newVar.costPrice;
+          }
+          setPurchaseData({ ...purchaseData, items: updated });
+        }}
+      />
     </div>
   );
 };

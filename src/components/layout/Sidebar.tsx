@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+import brandLogo from '../../assets/logo.jpg';
+
 export type TabType =
   | 'dashboard'
   | 'pos'
@@ -56,11 +58,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'pos', label: 'POS Billing Terminal', icon: ShoppingCart },
     { id: 'sales', label: 'Sales & Orders', icon: Receipt, roles: ['ADMIN', 'MANAGER', 'STAFF'] },
     { id: 'customers', label: 'Customer Records', icon: User, roles: ['ADMIN', 'MANAGER', 'STAFF'] },
-    { id: 'inventory', label: 'Product Inventory', icon: Boxes, badge: lowStockCount },
+    { id: 'inventory', label: 'Product Inventory', icon: Boxes, badge: lowStockCount, roles: ['ADMIN', 'MANAGER'] },
     { id: 'purchases', label: 'Purchases & Invoices', icon: ShoppingBag, roles: ['ADMIN', 'MANAGER'] },
     { id: 'suppliers', label: 'Suppliers & Payables', icon: Truck, roles: ['ADMIN', 'MANAGER'] },
     { id: 'import', label: 'Bulk Import', icon: FileSpreadsheet, roles: ['ADMIN', 'MANAGER'] },
-    { id: 'khata', label: 'Customer Khata', icon: CreditCard },
+    { id: 'khata', label: 'Customer Khata', icon: CreditCard, roles: ['ADMIN', 'MANAGER'] },
     { id: 'expenses', label: 'Expenses & Payroll', icon: DollarSign, roles: ['ADMIN', 'MANAGER'] },
     { id: 'reports', label: 'Financial Analytics', icon: BarChart3, roles: ['ADMIN', 'MANAGER'] },
     { id: 'settings', label: 'Settings & Backups', icon: Settings, roles: ['ADMIN'] },
@@ -81,22 +83,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div>
         <div className="flex items-center justify-between pb-4 mb-2 border-b border-slate-100 dark:border-slate-800/80">
           <div className="flex items-center space-x-3 overflow-hidden">
-            {/* Diamond / Geometric Logo Icon */}
-            <div className="w-10 h-10 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center shadow-sm flex-shrink-0">
-              <svg
-                viewBox="0 0 24 24"
-                className="w-5 h-5 fill-current"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  fill="none"
-                />
-              </svg>
+            {/* Brand Logo */}
+            <div className="w-10 h-10 rounded-2xl bg-amber-400/20 p-1 flex items-center justify-center shadow-xs flex-shrink-0 border border-amber-300/40 overflow-hidden">
+              <img
+                src={brandLogo}
+                alt="Brands 4 Less Logo"
+                className="w-full h-full object-contain rounded-xl"
+              />
             </div>
 
             {isExpanded && (

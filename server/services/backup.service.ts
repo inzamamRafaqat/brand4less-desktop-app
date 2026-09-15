@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { getDb, closeDb } from '../database/db.js';
-import { CONFIG } from '../config/index.js';
+import { CONFIG, resolveInsideDir } from '../config/index.js';
 import { AuditService } from './audit.service.js';
 import { runMigrations } from '../database/migrations.js';
 
@@ -100,8 +100,8 @@ export class BackupService {
    * Restores database from a selected backup file.
    */
   static restoreBackup(filename: string, userId: string): boolean {
-    const backupPath = path.join(CONFIG.BACKUPS_DIR, filename);
-    if (!fs.existsSync(backupPath)) {
+    const backupPath = resolveInsideDir(CONFIG.BACKUPS_DIR, filename);
+    if (!backupPath || !backupPath.endsWith('.db') || !fs.existsSync(backupPath)) {
       throw new Error(`Backup file ${filename} does not exist.`);
     }
 
@@ -140,5 +140,74 @@ export class BackupService {
     });
 
     return true;
+  }
+
+  /**
+   * Imports an external SQLite backup file, validates its integrity, and stores it in the backups directory.
+   * Optionally restores it immediately.
+   */
+  static importBackup(
+    tempFilePath: string,
+    originalFilename: string,
+    restoreImmediately: boolean = false,
+    userId: string = 'system'
+  ): BackupInfo & { restored: boolean } {
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error('Imported backup file was not found on server.');
+    }
+
+    // 1. Verify SQLite integrity
+    const isValid = this.verifyBackupIntegrity(tempFilePath);
+    if (!isValid) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (_) {}
+      throw new Error('Uploaded file is not a valid SQLite database or is corrupted.');
+    }
+
+    // 2. Ensure target backup directory exists
+    if (!fs.existsSync(CONFIG.BACKUPS_DIR)) {
+      fs.mkdirSync(CONFIG.BACKUPS_DIR, { recursive: true });
+    }
+
+    // 3. Generate clean target filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const baseName = path.basename(originalFilename, path.extname(originalFilename)).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const targetFilename = `imported_${timestamp}_${baseName}.db`;
+    const targetPath = path.join(CONFIG.BACKUPS_DIR, targetFilename);
+
+    // If file is not already at targetPath, copy and delete temp
+    if (path.resolve(tempFilePath) !== path.resolve(targetPath)) {
+      fs.copyFileSync(tempFilePath, targetPath);
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (_) {}
+    }
+
+    const stats = fs.statSync(targetPath);
+    let restored = false;
+
+    // 4. If requested, restore immediately
+    if (restoreImmediately) {
+      this.restoreBackup(targetFilename, userId);
+      restored = true;
+    }
+
+    AuditService.log({
+      userId,
+      action: 'IMPORT_BACKUP',
+      entityType: 'SYSTEM',
+      newValue: { filename: targetFilename, originalFilename, restored },
+    });
+
+    return {
+      filename: targetFilename,
+      filepath: targetPath,
+      sizeBytes: stats.size,
+      sizeFormatted: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
+      createdAt: new Date().toISOString(),
+      isValid: true,
+      restored,
+    };
   }
 }

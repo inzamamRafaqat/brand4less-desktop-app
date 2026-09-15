@@ -1,6 +1,7 @@
 import { getDb, runTransaction } from '../database/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from './audit.service.js';
+import { localDateStr } from '../utils/time.js';
 
 export interface CreateExpenseInput {
   categoryId?: string;
@@ -175,14 +176,14 @@ export class ExpenseService {
 
     db.prepare(`
       INSERT INTO expenses (id, category_id, title, amount, payment_method, expense_date, receipt_image_url, notes, user_id)
-      VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       catId,
       title.trim(),
       input.amount,
       input.paymentMethod || 'CASH',
-      input.expenseDate || null,
+      input.expenseDate || localDateStr(), // store-local day, not UTC
       input.receiptImageUrl || null,
       input.notes || input.description || null,
       userId
@@ -225,9 +226,10 @@ export class ExpenseService {
     `).all() as any[];
 
     if (employees.length === 0) {
-      // Return active users as fallback
+      // Fallback to active users. NOTE: the users table has no `phone` column —
+      // selecting it here previously crashed this endpoint on a fresh install.
       const users = db.prepare(`
-        SELECT id, username as name, username, full_name, phone, role as designation, 35000 as base_salary, is_active
+        SELECT id, username as name, username, full_name, NULL as phone, role as designation, 35000 as base_salary, is_active
         FROM users
         WHERE is_active = 1
       `).all() as any[];
@@ -354,15 +356,21 @@ export class ExpenseService {
 
       const expenseId = uuidv4();
       const expenseTitle = `Salary Disbursement: ${disb.employee_name} (${disb.month_year})`;
+      // Date the expense to the payroll month it settles, not the approval day,
+      // so month-by-month P&L attributes salary to the right period.
+      const expenseDate = /^\d{4}-(0[1-9]|1[0-2])$/.test(disb.month_year)
+        ? `${disb.month_year}-01`
+        : new Date().toISOString().slice(0, 10);
       db.prepare(`
         INSERT INTO expenses (id, category_id, title, amount, payment_method, expense_date, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         expenseId,
         salaryCat.id,
         expenseTitle,
         netSalary,
         paymentMethod,
+        expenseDate,
         `Auto-posted salary for ${disb.month_year}. Base: PKR ${disb.base_salary}, Bonus: PKR ${bonus}, Deductions: PKR ${deductions}`,
         userId
       );
@@ -398,7 +406,7 @@ export class ExpenseService {
       staffId?: string;
       employeeId?: string;
       salaryMonth: string;
-      baseSalary: number;
+      baseSalary?: number;
       bonusAmount?: number;
       deductions?: number;
       paymentMethod?: 'CASH' | 'BANK_TRANSFER' | 'CARD';
@@ -407,45 +415,110 @@ export class ExpenseService {
     userId: string
   ): any {
     return runTransaction((db) => {
-      const bonus = input.bonusAmount || 0;
-      const deduct = input.deductions || 0;
-      const netSalary = input.baseSalary + bonus - deduct;
-      const empId = input.staffId || input.employeeId || uuidv4();
+      const empId = input.staffId || input.employeeId;
+      if (!empId) throw new Error('Select an employee to disburse salary to.');
 
-      // Check / Create Salary Category in Expenses
-      let salaryCat = db.prepare("SELECT id FROM expense_categories WHERE name LIKE '%Salary%' OR name LIKE '%Salaries%' OR name LIKE '%Payroll%'").get() as { id: string } | undefined;
+      const emp = db.prepare('SELECT * FROM staff_employees WHERE id = ?').get(empId) as any;
+      if (!emp) throw new Error('Employee not found. Add the staff member before disbursing salary.');
+
+      const month = String(input.salaryMonth || '').trim();
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        throw new Error('Salary month must be in YYYY-MM format.');
+      }
+
+      if (input.paymentMethod && input.paymentMethod !== 'CASH' && input.paymentMethod !== 'BANK_TRANSFER') {
+        throw new Error('Salaries can only be paid by cash or bank transfer.');
+      }
+      const paymentMethod = input.paymentMethod === 'BANK_TRANSFER' ? 'BANK_TRANSFER' : 'CASH';
+
+      const baseSalary = Number(input.baseSalary ?? emp.monthly_salary);
+      const bonus = Number(input.bonusAmount || 0);
+      const deduct = Number(input.deductions || 0);
+      if (!Number.isFinite(baseSalary) || baseSalary < 0) throw new Error('Base salary must be a non-negative number.');
+      if (!Number.isFinite(bonus) || bonus < 0) throw new Error('Bonus must be a non-negative number.');
+      if (!Number.isFinite(deduct) || deduct < 0) throw new Error('Deductions must be a non-negative number.');
+      const netSalary = Number((baseSalary + bonus - deduct).toFixed(2));
+      if (netSalary < 0) throw new Error('Net salary cannot be negative.');
+
+      // Stop the same employee being paid twice for one month — whether the
+      // existing record came from generateMonthlyPayroll or a prior disbursement.
+      const existing = db
+        .prepare('SELECT id, status FROM salary_disbursements WHERE employee_id = ? AND month_year = ?')
+        .get(empId, month) as { id: string; status: string } | undefined;
+      if (existing) {
+        if (existing.status === 'DISBURSED') {
+          throw new Error(`${emp.name} has already been paid for ${month}.`);
+        }
+        throw new Error(
+          `A ${existing.status.toLowerCase()} payroll record for ${emp.name} (${month}) already exists — approve that record instead of a direct disbursement.`
+        );
+      }
+
+      // Salary expense category
+      let salaryCat = db
+        .prepare("SELECT id FROM expense_categories WHERE name LIKE '%Salar%' OR name LIKE '%Payroll%'")
+        .get() as { id: string } | undefined;
       if (!salaryCat) {
         const catId = uuidv4();
-        db.prepare("INSERT INTO expense_categories (id, name, description) VALUES (?, 'Staff Salaries & Payroll', 'Monthly staff salaries')")
-          .run(catId);
+        db.prepare(
+          "INSERT INTO expense_categories (id, name, description) VALUES (?, 'Staff Salaries & Payroll', 'Monthly staff salaries')"
+        ).run(catId);
         salaryCat = { id: catId };
       }
 
-      // Check if employee exists or create
-      const emp = db.prepare('SELECT name FROM staff_employees WHERE id = ?').get(empId) as any;
-      const empName = emp ? emp.name : 'Staff Member';
-
-      // Record Expense
+      // Expense — dated to the payroll month it settles, not the day it is keyed
+      // in. (approveSalary still dates to CURRENT_DATE; align it when that item
+      // is picked up.)
       const expenseId = uuidv4();
-      const expenseTitle = `Salary: ${empName} (${input.salaryMonth})`;
       db.prepare(`
         INSERT INTO expenses (id, category_id, title, amount, payment_method, expense_date, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         expenseId,
         salaryCat.id,
-        expenseTitle,
+        `Salary: ${emp.name} (${month})`,
         netSalary,
-        input.paymentMethod || 'CASH',
-        `Monthly salary for ${input.salaryMonth}. Base: PKR ${input.baseSalary}, Bonus: PKR ${bonus}, Deductions: PKR ${deduct}`,
+        paymentMethod,
+        `${month}-01`,
+        input.notes ||
+          `Direct salary disbursement for ${month}. Base: PKR ${baseSalary}, Bonus: PKR ${bonus}, Deductions: PKR ${deduct}`,
         userId
       );
 
+      // Payroll audit record, mirroring approveSalary's DISBURSED row.
+      const disbursementId = uuidv4();
+      db.prepare(`
+        INSERT INTO salary_disbursements (
+          id, employee_id, month_year, base_salary, bonus, deductions, net_salary,
+          payment_method, status, expense_id, approved_by, disbursed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DISBURSED', ?, ?, CURRENT_TIMESTAMP)
+      `).run(
+        disbursementId,
+        empId,
+        month,
+        baseSalary,
+        bonus,
+        deduct,
+        netSalary,
+        paymentMethod,
+        expenseId,
+        userId
+      );
+
+      AuditService.log({
+        userId,
+        action: 'DISBURSE_DIRECT_SALARY',
+        entityType: 'SALARY',
+        entityId: disbursementId,
+        newValue: { employeeId: empId, employeeName: emp.name, month, baseSalary, bonus, deductions: deduct, netSalary, paymentMethod },
+      });
+
       return {
         success: true,
+        disbursementId,
         expenseId,
         netSalary,
-        monthYear: input.salaryMonth,
+        monthYear: month,
       };
     });
   }

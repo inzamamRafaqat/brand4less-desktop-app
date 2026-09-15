@@ -4,6 +4,7 @@ import { calculateSaleTotals, CartItemInput } from '../domain/calculation.js';
 import { generateQrDataUrl } from '../domain/sku-generator.js';
 import { AuditService } from './audit.service.js';
 import { CONFIG } from '../config/index.js';
+import { localNow } from '../utils/time.js';
 
 export interface PosCheckoutPayment {
   method: 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'KHATA';
@@ -26,6 +27,11 @@ export interface PosCheckoutInput {
   payments: PosCheckoutPayment[];
   notes?: string;
   cashTendered?: number;
+  /**
+   * Value of goods traded in against this sale (exchanges only). Counts toward
+   * payment sufficiency but is never written as a cash/card tender line.
+   */
+  exchangeCredit?: number;
 }
 
 export class PosService {
@@ -33,14 +39,14 @@ export class PosService {
    * Generates a sequential, readable invoice number e.g. INV-20260901-0001
    */
   private static generateInvoiceNumber(db: any): string {
-    const today = new Date();
+    const today = localNow();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = `INV-${dateStr}-`;
 
     const lastSale = db.prepare(`
-      SELECT invoice_number FROM sales 
-      WHERE invoice_number LIKE ? 
-      ORDER BY created_at DESC LIMIT 1
+      SELECT invoice_number FROM sales
+      WHERE invoice_number LIKE ?
+      ORDER BY invoice_number DESC LIMIT 1
     `).get(`${prefix}%`) as { invoice_number: string } | undefined;
 
     let seq = 1;
@@ -60,6 +66,39 @@ export class PosService {
     return runTransaction((db) => {
       if (!input.items || input.items.length === 0) {
         throw new Error('Cannot complete checkout with an empty cart.');
+      }
+
+      // Reject malformed line items and payments before touching inventory —
+      // negative / non-integer quantities would otherwise corrupt stock levels
+      // and negative prices would poison profit figures.
+      for (const item of input.items) {
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          throw new Error('Each cart line must have a positive whole-number quantity.');
+        }
+        if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+          throw new Error('Each cart line must have a valid non-negative unit price.');
+        }
+        if (item.discountAmount !== undefined && (!Number.isFinite(item.discountAmount) || item.discountAmount < 0)) {
+          throw new Error('Line discount must be a non-negative number.');
+        }
+      }
+      const exchangeCredit = Number(Math.max(0, input.exchangeCredit || 0).toFixed(2));
+      if (input.exchangeCredit !== undefined && (!Number.isFinite(input.exchangeCredit) || input.exchangeCredit < 0)) {
+        throw new Error('Exchange credit must be a non-negative number.');
+      }
+      if (!Array.isArray(input.payments) || (input.payments.length === 0 && exchangeCredit <= 0)) {
+        throw new Error('At least one payment entry is required.');
+      }
+      for (const p of input.payments) {
+        if (!Number.isFinite(p.amount) || p.amount <= 0) {
+          throw new Error('Each payment amount must be a positive number.');
+        }
+      }
+      if (input.overallDiscount !== undefined && (!Number.isFinite(input.overallDiscount) || input.overallDiscount < 0)) {
+        throw new Error('Overall discount must be a non-negative number.');
+      }
+      if (input.taxRatePercent !== undefined && (!Number.isFinite(input.taxRatePercent) || input.taxRatePercent < 0 || input.taxRatePercent > 100)) {
+        throw new Error('Tax rate must be between 0 and 100.');
       }
 
       // Check system setting for negative stock
@@ -112,11 +151,20 @@ export class PosService {
       const khataAmount = khataPayment ? khataPayment.amount : 0;
       const cashOrDigitalPaid = totalPaid - khataAmount;
 
-      if (totalPaid < calcResult.netTotal - 0.01) {
+      if (totalPaid + exchangeCredit < calcResult.netTotal - 0.01) {
         throw new Error(
-          `Insufficient payment amount. Total is ${calcResult.netTotal}, but provided payments total ${totalPaid}.`
+          `Insufficient payment amount. Total is ${calcResult.netTotal}, but provided payments total ${totalPaid}` +
+            (exchangeCredit > 0 ? ` plus ${exchangeCredit} exchange credit.` : '.')
         );
       }
+
+      // Overpayment is change owed back to the customer, not revenue. Trade-in
+      // (exchange) credit covers net_total before any cash does; only the
+      // remaining non-Khata balance is booked as paid, and anything tendered
+      // beyond that is recorded as change_due.
+      const nonKhataOwed = Number(Math.max(0, calcResult.netTotal - khataAmount - exchangeCredit).toFixed(2));
+      const recordedPaidAmount = Number(Math.min(cashOrDigitalPaid, nonKhataOwed).toFixed(2));
+      const changeDue = Number(Math.max(0, cashOrDigitalPaid - nonKhataOwed).toFixed(2));
 
       // Determine main payment method classification
       let paymentMethod = 'CASH';
@@ -144,9 +192,11 @@ export class PosService {
           effectiveCustomerId = customer.id;
         } else if (input.customerName?.trim()) {
           effectiveCustomerId = uuidv4();
+          // New customers start with no Khata credit line; a limit must be set
+          // deliberately before they can buy on credit.
           db.prepare(`
             INSERT INTO customers (id, name, phone, current_balance, credit_limit)
-            VALUES (?, ?, ?, 0.0, 50000.0)
+            VALUES (?, ?, ?, 0.0, 0.0)
           `).run(effectiveCustomerId, input.customerName.trim(), phone);
           customer = { id: effectiveCustomerId, name: input.customerName.trim(), phone, current_balance: 0 };
         }
@@ -157,13 +207,19 @@ export class PosService {
           throw new Error('Customer profile must be selected to charge an amount to Khata (Credit).');
         }
 
-        if (customer.credit_limit > 0) {
-          const newBal = customer.current_balance + khataAmount;
-          if (newBal > customer.credit_limit) {
-            throw new Error(
-              `Credit limit exceeded for ${customer.name}. Max limit: ${customer.credit_limit}, Current: ${customer.current_balance}, Requested Credit: ${khataAmount}`
-            );
-          }
+        // A credit limit of 0 (or unset) means this customer is not approved for
+        // Khata — it must never be read as "unlimited".
+        if (!(customer.credit_limit > 0)) {
+          throw new Error(
+            `${customer.name} has no Khata credit limit set. Set a credit limit on the customer before selling on credit.`
+          );
+        }
+
+        const newBal = customer.current_balance + khataAmount;
+        if (newBal > customer.credit_limit) {
+          throw new Error(
+            `Credit limit exceeded for ${customer.name}. Max limit: ${customer.credit_limit}, Current: ${customer.current_balance}, Requested Credit: ${khataAmount}`
+          );
         }
       }
 
@@ -174,9 +230,9 @@ export class PosService {
       db.prepare(`
         INSERT INTO sales (
           id, invoice_number, customer_id, subtotal, discount_amount, tax_amount, net_total,
-          total_cost, total_profit, paid_amount, khata_amount, payment_method, payment_status,
+          total_cost, total_profit, paid_amount, change_due, exchange_credit, khata_amount, payment_method, payment_status,
           status, cashier_id, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
       `).run(
         saleId,
         invoiceNumber,
@@ -187,7 +243,9 @@ export class PosService {
         calcResult.netTotal,
         calcResult.totalCost,
         calcResult.totalProfit,
-        cashOrDigitalPaid,
+        recordedPaidAmount,
+        changeDue,
+        exchangeCredit,
         khataAmount,
         paymentMethod,
         paymentStatus,
@@ -298,6 +356,41 @@ export class PosService {
       // 10. Fetch Complete Sale for Receipt
       return PosService.getSaleById(saleId);
     });
+  }
+
+  /**
+   * Prices a cart without persisting anything — used to settle exchange
+   * differences before running the real checkout.
+   */
+  static quote(input: PosCheckoutInput): ReturnType<typeof calculateSaleTotals> {
+    const db = getDb();
+    if (!input.items || input.items.length === 0) {
+      throw new Error('Cannot price an empty cart.');
+    }
+
+    const getVariant = db.prepare(
+      'SELECT cost_price FROM product_variants WHERE id = ? AND is_active = 1'
+    );
+
+    const rawCalcInputs: CartItemInput[] = input.items.map((item) => {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new Error('Each cart line must have a positive whole-number quantity.');
+      }
+      if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+        throw new Error('Each cart line must have a valid non-negative unit price.');
+      }
+      const v = getVariant.get(item.variantId) as { cost_price: number } | undefined;
+      if (!v) throw new Error(`Product variant ${item.variantId} not found or inactive.`);
+      return {
+        variantId: item.variantId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        unitCost: v.cost_price,
+        discountAmount: item.discountAmount || 0,
+      };
+    });
+
+    return calculateSaleTotals(rawCalcInputs, input.overallDiscount || 0, input.taxRatePercent || 0);
   }
 
   /**
@@ -464,6 +557,8 @@ export class PosService {
         taxAmount: sale.tax_amount,
         netTotal: sale.net_total,
         paidAmount: sale.paid_amount,
+        changeDue: sale.change_due || 0,
+        exchangeCredit: sale.exchange_credit || 0,
         khataAmount: sale.khata_amount,
         paymentMethod: sale.payment_method,
         paymentStatus: sale.payment_status,
