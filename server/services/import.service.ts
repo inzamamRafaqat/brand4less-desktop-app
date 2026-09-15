@@ -69,11 +69,15 @@ export class ImportService {
     const worksheet = workbook.worksheets[0];
     if (!worksheet) throw new Error('File contains no worksheets');
 
+    const colToHeader = new Map<number, string>();
     const headers: string[] = [];
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell, colNumber) => {
       const val = cell.value?.toString().trim();
-      if (val) headers.push(val);
+      if (val) {
+        colToHeader.set(colNumber, val);
+        headers.push(val);
+      }
     });
 
     const suggestedMapping = this.autoDetectMapping(headers);
@@ -82,8 +86,8 @@ export class ImportService {
     for (let r = 2; r <= Math.min(worksheet.rowCount, 10); r++) {
       const row = worksheet.getRow(r);
       const rowData: Record<string, any> = {};
-      headers.forEach((header, idx) => {
-        const cellVal = row.getCell(idx + 1).value;
+      colToHeader.forEach((header, colNumber) => {
+        const cellVal = row.getCell(colNumber).value;
         rowData[header] = cellVal !== null && cellVal !== undefined ? cellVal.toString() : '';
       });
       if (Object.values(rowData).some((v) => v !== '')) {
@@ -162,10 +166,14 @@ export class ImportService {
 
     const worksheet = workbook.worksheets[0];
     const previewRows: ImportPreviewRow[] = [];
-    const headers: string[] = [];
+    const colToHeader = new Map<number, string>();
 
-    worksheet.getRow(1).eachCell((cell) => {
-      headers.push(cell.value?.toString().trim() || '');
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell, colNumber) => {
+      const val = cell.value?.toString().trim();
+      if (val) {
+        colToHeader.set(colNumber, val);
+      }
     });
 
     const seenSkus = new Set<string>();
@@ -175,34 +183,42 @@ export class ImportService {
       const rowData: Record<string, any> = {};
       let hasData = false;
 
-      headers.forEach((h, idx) => {
-        const val = row.getCell(idx + 1).value;
-        rowData[h] = val !== null && val !== undefined ? val.toString().trim() : '';
-        if (rowData[h]) hasData = true;
+      colToHeader.forEach((headerName, colNumber) => {
+        const val = row.getCell(colNumber).value;
+        const strVal = val !== null && val !== undefined ? val.toString().trim() : '';
+        rowData[headerName] = strVal;
+        if (strVal) hasData = true;
       });
 
       if (!hasData) continue;
 
-      const rawName = rowData[mapping.name] || '';
-      const rawCategory = rowData[mapping.category] || 'General';
-      const rawColor = mapping.color ? rowData[mapping.color] || '' : '';
-      const rawSize = mapping.size ? rowData[mapping.size] || '' : '';
-      const rawOrigin = mapping.origin ? rowData[mapping.origin] || 'Local' : 'Local';
-      const rawBrand = mapping.brand ? rowData[mapping.brand] || '' : '';
-      const rawCost = mapping.costPrice ? parseFloat(rowData[mapping.costPrice] || '0') : 0;
-      const rawSell = parseFloat(rowData[mapping.sellingPrice] || '0');
-      const rawQty = mapping.quantity ? parseInt(rowData[mapping.quantity] || '0', 10) : 0;
-      const rawSku = mapping.sku ? rowData[mapping.sku] || '' : '';
-      const rawBarcode = mapping.barcode ? rowData[mapping.barcode] || '' : '';
-      const rawMinStock = mapping.minStockLevel ? parseInt(rowData[mapping.minStockLevel] || '3', 10) : 3;
+      const rawName = (rowData[mapping.name] || '').trim();
+      const rawCategory = (rowData[mapping.category] || '').trim();
+      const rawColor = mapping.color ? (rowData[mapping.color] || '').trim() : '';
+      const rawSize = mapping.size ? (rowData[mapping.size] || '').trim() : '';
+      const rawOrigin = mapping.origin ? (rowData[mapping.origin] || 'Local').trim() : 'Local';
+      const rawBrand = mapping.brand ? (rowData[mapping.brand] || '').trim() : '';
+
+      const cleanNum = (v: any) => {
+        if (v === null || v === undefined) return NaN;
+        const cleaned = v.toString().replace(/[^0-9.-]/g, '').trim();
+        return cleaned === '' ? NaN : parseFloat(cleaned);
+      };
+
+      const parsedCost = mapping.costPrice ? cleanNum(rowData[mapping.costPrice]) : 0;
+      const parsedSell = cleanNum(rowData[mapping.sellingPrice]);
+      const parsedQty = mapping.quantity ? cleanNum(rowData[mapping.quantity]) : 0;
+      const rawSku = mapping.sku ? (rowData[mapping.sku] || '').trim() : '';
+      const rawBarcode = mapping.barcode ? (rowData[mapping.barcode] || '').trim() : '';
+      const parsedMinStock = mapping.minStockLevel ? cleanNum(rowData[mapping.minStockLevel]) : 3;
 
       const errors: string[] = [];
 
       if (!rawName) errors.push('Product Name is required.');
       if (!rawCategory) errors.push('Category is required.');
-      if (isNaN(rawSell) || rawSell < 0) errors.push('Selling Price must be a valid positive number.');
-      if (isNaN(rawCost) || rawCost < 0) errors.push('Cost Price must be a valid number.');
-      if (isNaN(rawQty) || rawQty < 0) errors.push('Quantity must be a valid non-negative integer.');
+      if (isNaN(parsedSell) || parsedSell < 0) errors.push('Selling Price must be a valid positive number.');
+      if (isNaN(parsedCost) || parsedCost < 0) errors.push('Cost Price must be a valid number.');
+      if (isNaN(parsedQty) || parsedQty < 0) errors.push('Quantity must be a valid non-negative integer.');
 
       if (rawSku) {
         if (seenSkus.has(rawSku.toUpperCase())) {
@@ -217,17 +233,17 @@ export class ImportService {
         data: rowData,
         mapped: {
           name: rawName,
-          category: rawCategory,
+          category: rawCategory || 'General',
           color: rawColor || undefined,
           size: rawSize || undefined,
           origin: rawOrigin.toLowerCase().includes('imp') ? 'Imported' : 'Local',
           brand: rawBrand || undefined,
-          costPrice: isNaN(rawCost) ? 0 : rawCost,
-          sellingPrice: isNaN(rawSell) ? 0 : rawSell,
-          quantity: isNaN(rawQty) ? 0 : rawQty,
+          costPrice: isNaN(parsedCost) ? 0 : parsedCost,
+          sellingPrice: isNaN(parsedSell) ? 0 : parsedSell,
+          quantity: isNaN(parsedQty) ? 0 : Math.floor(parsedQty),
           sku: rawSku || undefined,
           barcode: rawBarcode || undefined,
-          minStockLevel: isNaN(rawMinStock) ? 3 : rawMinStock,
+          minStockLevel: isNaN(parsedMinStock) ? 3 : Math.floor(parsedMinStock),
         },
         isValid: errors.length === 0,
         errors,

@@ -15,10 +15,12 @@ export interface ReturnItemInput {
 
 export interface ProcessReturnInput {
   originalSaleId?: string;
+  saleId?: string;
   customerId?: string;
   items: ReturnItemInput[];
   refundMethod: 'CASH' | 'KHATA_CREDIT' | 'EXCHANGE_OFFSET';
   reason?: string;
+  notes?: string;
 }
 
 export interface ProcessExchangeInput {
@@ -66,10 +68,11 @@ export class ReturnsService {
       const returnNumber = this.generateReturnNumber(db);
       let totalRefundAmount = 0;
 
-      // Check original sale if provided
+      // Check original sale if provided (accept both originalSaleId and saleId)
+      const targetSaleId = input.originalSaleId || input.saleId || (input as any).sale_id;
       let sale: any = null;
-      if (input.originalSaleId) {
-        sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(input.originalSaleId);
+      if (targetSaleId) {
+        sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(targetSaleId);
         if (!sale) throw new Error('Original sale not found.');
       }
 
@@ -116,10 +119,11 @@ export class ReturnsService {
             : (db.prepare('SELECT * FROM sale_items WHERE sale_id = ? AND variant_id = ?').get(sale.id, item.variantId) as any);
 
           if (!saleItem) {
-            throw new Error(`Item ${item.variantId} was not part of the original sale ${sale.invoice_number}.`);
+            throw new Error(`Item was not found on original sale ${sale.invoice_number}.`);
           }
 
-          const priorQty = alreadyReturned.get(priceKey(item.variantId, item.saleItemId)) || 0;
+          const resolvedVariantId = item.variantId || saleItem.variant_id;
+          const priorQty = alreadyReturned.get(priceKey(resolvedVariantId, item.saleItemId)) || 0;
           if (priorQty + item.quantity > saleItem.quantity) {
             throw new Error(
               `Return quantity for one item exceeds what was sold (sold ${saleItem.quantity}, already returned ${priorQty}).`
@@ -131,8 +135,11 @@ export class ReturnsService {
           const lineUnitSubtotal = saleItem.quantity > 0 ? saleItem.subtotal / saleItem.quantity : saleItem.unit_price;
           refundUnitPrice = Number((lineUnitSubtotal * saleValueRatio).toFixed(2));
           // Reverse COGS at the cost captured on the sale, not the current WAC.
-          return { ...item, refundUnitPrice, unitCost: Number(saleItem.unit_cost) };
+          return { ...item, variantId: resolvedVariantId, refundUnitPrice, unitCost: Number(saleItem.unit_cost) };
         } else {
+          if (!item.variantId) {
+            throw new Error('Please select a valid product variant to return.');
+          }
           // No-receipt return (manager-authorised): clamp to the current selling price.
           const variant = db.prepare('SELECT selling_price, cost_price FROM product_variants WHERE id = ?').get(item.variantId) as any;
           if (!variant) throw new Error(`Product variant ${item.variantId} not found.`);
@@ -172,7 +179,7 @@ export class ReturnsService {
       `).run(
         returnId,
         returnNumber,
-        input.originalSaleId || null,
+        targetSaleId || null,
         customerId,
         totalRefundAmount,
         input.refundMethod,
@@ -406,9 +413,15 @@ export class ReturnsService {
 
     const count = db.prepare('SELECT COUNT(*) as count FROM returns').get() as { count: number };
     const returns = db.prepare(`
-      SELECT r.*, c.name as customer_name, c.phone as customer_phone, u.full_name as user_name
+      SELECT r.*,
+             c.name as customer_name,
+             c.phone as customer_phone,
+             u.full_name as user_name,
+             s.invoice_number as original_invoice_number,
+             COALESCE((SELECT SUM(quantity) FROM return_items WHERE return_id = r.id), 0) as total_items_count
       FROM returns r
       LEFT JOIN customers c ON r.customer_id = c.id
+      LEFT JOIN sales s ON r.original_sale_id = s.id
       JOIN users u ON r.user_id = u.id
       ORDER BY r.created_at DESC
       LIMIT ? OFFSET ?

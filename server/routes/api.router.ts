@@ -23,7 +23,7 @@ import {
 // ── Upload handling ───────────────────────────────────────────────────────
 // Only spreadsheet + image + pdf attachments are ever expected. Anything else
 // (html, svg, scripts) could be served back from the same origin as the app.
-const ALLOWED_UPLOAD_EXT = new Set(['.xlsx', '.xls', '.csv', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.pdf']);
+const ALLOWED_UPLOAD_EXT = new Set(['.xlsx', '.xls', '.csv', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.pdf', '.doc', '.docx']);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -47,6 +47,44 @@ const upload = multer({
     }
   },
 });
+
+const backupStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    if (!fs.existsSync(CONFIG.BACKUPS_DIR)) {
+      fs.mkdirSync(CONFIG.BACKUPS_DIR, { recursive: true });
+    }
+    cb(null, CONFIG.BACKUPS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const baseName = path.basename(file.originalname, path.extname(file.originalname)).replace(/[^a-zA-Z0-9_-]/g, '_');
+    cb(null, `imported_${timestamp}_${baseName}.db`);
+  },
+});
+
+const backupUpload = multer({
+  storage: backupStorage,
+  limits: { fileSize: 300 * 1024 * 1024 }, // 300MB limit for database backups
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.db', '.sqlite', '.sqlite3', '.bak'].includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid backup file type "${ext}". Only SQLite .db and .sqlite files are supported.`));
+    }
+  },
+});
+
+const backupUploadMiddleware = (req: any, res: any, next: any) => {
+  backupUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'backupFile', maxCount: 1 }])(req, res, (err: any) => {
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    if (req.files) {
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+      req.file = files['file']?.[0] || files['backupFile']?.[0];
+    }
+    next();
+  });
+};
 
 export const apiRouter = Router();
 
@@ -72,6 +110,7 @@ apiRouter.put('/settings', authenticateToken, requireRole('ADMIN'), AuthControll
 apiRouter.get('/categories', authenticateToken, ProductController.getCategories);
 apiRouter.post('/categories', authenticateToken, requirePermission('MANAGE_PRODUCTS'), ProductController.createCategory);
 apiRouter.get('/products', authenticateToken, ProductController.getProducts);
+apiRouter.get('/products/scan', authenticateToken, ProductController.scanBarcode);
 apiRouter.get('/products/pos-search', authenticateToken, ProductController.searchPos);
 apiRouter.get('/products/low-stock', authenticateToken, ProductController.getLowStock);
 apiRouter.get('/products/:id', authenticateToken, ProductController.getProductById);
@@ -165,10 +204,12 @@ apiRouter.get('/reports/audit-logs', authenticateToken, requirePermission('VIEW_
 apiRouter.post('/backups/create', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.createBackup);
 apiRouter.get('/backups', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.listBackups);
 apiRouter.post('/backups/restore', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.restoreBackup);
+apiRouter.post('/backups/import', authenticateToken, requirePermission('MANAGE_BACKUPS'), backupUploadMiddleware, BackupController.importBackup);
 
 apiRouter.post('/backup/create', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.createBackup);
 apiRouter.get('/backup/list', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.listBackups);
 apiRouter.post('/backup/restore', authenticateToken, requirePermission('MANAGE_BACKUPS'), BackupController.restoreBackup);
+apiRouter.post('/backup/import', authenticateToken, requirePermission('MANAGE_BACKUPS'), backupUploadMiddleware, BackupController.importBackup);
 apiRouter.get('/backup/download/:filename', authenticateToken, requirePermission('MANAGE_BACKUPS'), (req, res) => {
   const filePath = resolveInsideDir(CONFIG.BACKUPS_DIR, routeParam(req.params.filename));
   if (filePath && filePath.endsWith('.db') && fs.existsSync(filePath)) {
@@ -180,7 +221,14 @@ apiRouter.get('/backup/download/:filename', authenticateToken, requirePermission
 
 // ── 10. HARDWARE INTEGRATION (TSC, DTS, SPEEDX) ───────────────────────────
 apiRouter.get('/hardware/printers', authenticateToken, HardwareController.getPrinters);
+apiRouter.get('/hardware/diagnostics', authenticateToken, HardwareController.getDiagnostics);
 apiRouter.post('/hardware/test-tsc', authenticateToken, requirePermission('MANAGE_SETTINGS'), HardwareController.testTscPrinter);
+apiRouter.post('/hardware/test-epl', authenticateToken, requirePermission('MANAGE_SETTINGS'), HardwareController.testEplPrinter);
+apiRouter.post('/hardware/calibrate-tsc', authenticateToken, requirePermission('MANAGE_SETTINGS'), HardwareController.calibrateTscPrinter);
 apiRouter.post('/hardware/test-dts', authenticateToken, requirePermission('MANAGE_SETTINGS'), HardwareController.testDtsPrinter);
 apiRouter.post('/hardware/print-tspl', authenticateToken, requirePermission('VIEW_PRODUCTS'), HardwareController.printTspl);
 apiRouter.post('/hardware/print-escpos', authenticateToken, requirePermission('POS_CHECKOUT'), HardwareController.printEscPos);
+apiRouter.post('/hardware/validate-tspl', authenticateToken, HardwareController.validateTspl);
+apiRouter.post('/hardware/inspect-escpos', authenticateToken, HardwareController.inspectEscPos);
+apiRouter.get('/hardware/print-queue', authenticateToken, HardwareController.getPrintQueue);
+apiRouter.post('/hardware/print-retry', authenticateToken, HardwareController.retryPrintJob);

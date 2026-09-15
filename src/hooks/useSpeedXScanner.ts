@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react';
 
-interface UseSpeedXScannerOptions {
+export interface UseSpeedXScannerOptions {
   onScan: (barcode: string) => void;
   minChars?: number;
   maxIntervalMs?: number;
   enableBeep?: boolean;
+  prefix?: string;
+  suffix?: string;
 }
 
 /**
@@ -41,16 +43,34 @@ export const playScannerBeep = () => {
 export const useSpeedXScanner = ({
   onScan,
   minChars = 3,
-  maxIntervalMs = 60,
+  maxIntervalMs = 120, // 100-150ms recommended for reliable USB HID wedge scanners
   enableBeep = true,
+  prefix = '',
+  suffix = 'Enter',
 }: UseSpeedXScannerOptions) => {
   const bufferRef = useRef<string>('');
-  const lastKeyTimeRef = useRef<number>(0);
+  const charTimesRef = useRef<number[]>([]);
+  const timeoutIdRef = useRef<any>(null);
+  const onScanRef = useRef(onScan);
+  const lastScannedCodeRef = useRef<string>('');
+  const lastScannedTimeRef = useRef<number>(0);
 
   useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  useEffect(() => {
+    const resetBuffer = () => {
+      bufferRef.current = '';
+      charTimesRef.current = [];
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is actively typing in a standard input, textarea, or contentEditable element
-      // (unless the input has the data-scanner-input attribute explicitly)
+      const now = Date.now();
       const target = e.target as HTMLElement | null;
       const isFormField =
         target &&
@@ -59,46 +79,118 @@ export const useSpeedXScanner = ({
           target.tagName === 'SELECT' ||
           target.isContentEditable);
 
-      if (isFormField && !target.hasAttribute('data-scanner-input')) {
-        return;
-      }
+      // Check for scan completion trigger (Enter or Tab or configured suffix)
+      const isTerminator = e.key === 'Enter' || (suffix && e.key === suffix);
 
-      const now = Date.now();
-      const timeDiff = now - lastKeyTimeRef.current;
-      lastKeyTimeRef.current = now;
+      if (isTerminator) {
+        const rawCode = bufferRef.current.trim();
+        const timestamps = charTimesRef.current;
 
-      // Handle Enter (Scanner Terminator)
-      if (e.key === 'Enter') {
-        const barcode = bufferRef.current.trim();
-        bufferRef.current = '';
+        // Verify if characters arrived with high-speed burst typical of a barcode scanner
+        let isScannerBurst = false;
+        if (timestamps.length >= minChars) {
+          let maxGap = 0;
+          for (let i = 1; i < timestamps.length; i++) {
+            const gap = timestamps[i] - timestamps[i - 1];
+            if (gap > maxGap) maxGap = gap;
+          }
+          // If the maximum gap between any two characters was within maxIntervalMs, it's a hardware scanner
+          if (maxGap <= maxIntervalMs) {
+            isScannerBurst = true;
+          }
+        }
 
-        if (barcode.length >= minChars) {
+        if (rawCode.length >= minChars && (isScannerBurst || !isFormField || target?.hasAttribute('data-scanner-input'))) {
           e.preventDefault();
           e.stopPropagation();
+
+          let finalCode = rawCode;
+          if (prefix && finalCode.startsWith(prefix)) {
+            finalCode = finalCode.substring(prefix.length);
+          }
+
+          // Duplicate scan protection: suppress exact same barcode scanned within 400ms
+          const scanTime = Date.now();
+          if (finalCode === lastScannedCodeRef.current && scanTime - lastScannedTimeRef.current < 400) {
+            resetBuffer();
+            return;
+          }
+          lastScannedCodeRef.current = finalCode;
+          lastScannedTimeRef.current = scanTime;
 
           if (enableBeep) {
             playScannerBeep();
           }
 
-          onScan(barcode);
+          resetBuffer();
+
+          // If scanned while focused in an input field, clean that input so scanner text doesn't contaminate it
+          if (isFormField && target instanceof HTMLInputElement && !target.hasAttribute('data-keep-scanner-input')) {
+            target.value = '';
+          }
+
+          onScanRef.current(finalCode);
+          return;
         }
+
+        resetBuffer();
         return;
       }
 
-      // If time interval between characters is greater than threshold, reset buffer (manual typing)
-      if (timeDiff > maxIntervalMs) {
-        bufferRef.current = '';
-      }
+      // If key is a printable character (length 1)
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        // Check timing between consecutive characters
+        const lastTime = charTimesRef.current.length > 0 ? charTimesRef.current[charTimesRef.current.length - 1] : 0;
+        const timeDiff = lastTime > 0 ? now - lastTime : 0;
 
-      // Accumulate standard printable single characters
-      if (e.key.length === 1) {
-        bufferRef.current += e.key;
+        if (lastTime > 0 && timeDiff > maxIntervalMs) {
+          // Time gap too long -> reset buffer for fresh input
+          bufferRef.current = e.key;
+          charTimesRef.current = [now];
+        } else {
+          bufferRef.current += e.key;
+          charTimesRef.current.push(now);
+        }
+
+        // Set safety cleanup timer (resets buffer if scanner sent partial characters without terminator)
+        if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = setTimeout(resetBuffer, maxIntervalMs * 3);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true);
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
     };
-  }, [onScan, minChars, maxIntervalMs, enableBeep]);
+  }, [minChars, maxIntervalMs, enableBeep, prefix, suffix]);
+};
+
+/**
+ * Simulates rapid USB HID hardware keyboard-wedge scanner events for developer testing
+ */
+export const simulateSpeedXScan = (barcode: string) => {
+  const code = (barcode || '').trim();
+  if (!code) return;
+  
+  // Dispatch characters rapidly in succession
+  for (let i = 0; i < code.length; i++) {
+    const char = code[i];
+    const charEvent = new KeyboardEvent('keydown', {
+      key: char,
+      code: `Key${char.toUpperCase()}`,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(charEvent);
+  }
+
+  // Dispatch scanner terminator Enter key
+  const enterEvent = new KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true,
+  });
+  window.dispatchEvent(enterEvent);
 };

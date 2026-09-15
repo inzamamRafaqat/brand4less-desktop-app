@@ -14,6 +14,7 @@ import { ReportService } from '../services/report.service.js';
 import { BackupService } from '../services/backup.service.js';
 import { AuditService } from '../services/audit.service.js';
 import { HardwareService } from '../services/hardware.service.js';
+import { RawPrinterService } from '../services/raw-printer.service.js';
 
 export class AuthController {
   static async login(req: Request, res: Response): Promise<void> {
@@ -52,8 +53,8 @@ export class AuthController {
 
   static async changePassword(req: Request, res: Response): Promise<void> {
     try {
-      const { currentPassword, newPassword } = req.body;
-      const result = AuthService.changePassword(req.user!.id, currentPassword, newPassword);
+      const { currentPassword, newPassword, newPin } = req.body;
+      const result = AuthService.changePassword(req.user!.id, currentPassword, newPassword, newPin);
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ success: false, message: clientMessage(err) });
@@ -133,7 +134,7 @@ export class ProductController {
         categoryId: categoryId as string,
         origin: origin as string,
         page: page ? parseInt(page as string, 10) : 1,
-        limit: limit ? parseInt(limit as string, 10) : 50,
+        limit: limit ? parseInt(limit as string, 10) : 1000,
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
@@ -280,13 +281,32 @@ export class ProductController {
       res.status(500).json({ success: false, message: clientMessage(err) });
     }
   }
+
+  static scanBarcode(req: Request, res: Response): void {
+    try {
+      const code = (req.query.code as string || req.query.q as string || '').trim();
+      if (!code) {
+        res.status(400).json({ success: false, message: 'Barcode or SKU parameter is required' });
+        return;
+      }
+      const variant = ProductService.scanBarcode(code);
+      if (!variant) {
+        res.status(404).json({ success: false, message: `No product variant found for code "${code}"` });
+        return;
+      }
+      res.json({ success: true, variant });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
 }
 
 export class PosController {
   static async checkout(req: Request, res: Response): Promise<void> {
     try {
       const sale = PosService.checkout(req.body, req.user!.id);
-      res.json({ success: true, sale });
+      const receiptData = await PosService.getReceiptPayload(sale.id);
+      res.json({ success: true, sale, receiptData });
     } catch (err: any) {
       res.status(400).json({ success: false, message: clientMessage(err) });
     }
@@ -574,8 +594,16 @@ export class SupplierController {
 
   static async recordPayment(req: Request, res: Response): Promise<void> {
     try {
-      const { amount, paymentMethod, notes } = req.body;
-      const result = SupplierService.recordPayment(routeParam(req.params.id), amount, paymentMethod, notes, req.user!.id);
+      const { amount, paymentMethod, notes, purchaseId, purchaseInvoiceNo } = req.body;
+      const result = SupplierService.recordPayment(
+        routeParam(req.params.id),
+        amount,
+        paymentMethod,
+        notes,
+        req.user!.id,
+        purchaseId,
+        purchaseInvoiceNo
+      );
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: clientMessage(err) });
@@ -810,6 +838,31 @@ export class BackupController {
       res.status(400).json({ success: false, message: clientMessage(err) });
     }
   }
+
+  static async importBackup(req: Request, res: Response): Promise<void> {
+    try {
+      if (!req.file) {
+        res.status(400).json({ success: false, message: 'No backup file selected for upload.' });
+        return;
+      }
+      const restoreImmediately = req.body.restoreImmediately === 'true' || req.body.restoreImmediately === true;
+      const backup = BackupService.importBackup(
+        req.file.path,
+        req.file.originalname,
+        restoreImmediately,
+        req.user?.id || 'system'
+      );
+      res.json({
+        success: true,
+        message: backup.restored
+          ? `Backup imported and database restored successfully from "${req.file.originalname}"!`
+          : `Backup file "${req.file.originalname}" imported successfully into available snapshots.`,
+        backup,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: clientMessage(err) });
+    }
+  }
 }
 
 export class HardwareController {
@@ -822,10 +875,62 @@ export class HardwareController {
     }
   }
 
+  static async getDiagnostics(req: Request, res: Response): Promise<void> {
+    try {
+      const diagnostics = await HardwareService.getPrinterDiagnostics();
+      res.json({ success: true, diagnostics });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
   static async testTscPrinter(req: Request, res: Response): Promise<void> {
     try {
-      const { printerName } = req.body;
-      const result = await HardwareService.testTscPrinter(printerName);
+      const { printerName, widthMm, heightMm, gapMm, format } = req.body;
+      if (format === 'EPL' || format === 'EPL2') {
+        const result = await HardwareService.testEplPrinter(printerName, { widthMm, heightMm, gapMm });
+        res.json(result);
+        return;
+      }
+      const result = await HardwareService.testTscPrinter(printerName, { widthMm, heightMm, gapMm });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async testEplPrinter(req: Request, res: Response): Promise<void> {
+    try {
+      const { printerName, widthMm, heightMm, gapMm } = req.body;
+      const result = await HardwareService.testEplPrinter(printerName, { widthMm, heightMm, gapMm });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async calibrateTscPrinter(req: Request, res: Response): Promise<void> {
+    try {
+      const { printerName, widthMm, heightMm, sensorType } = req.body;
+      let targetPrinter = printerName;
+      if (!targetPrinter) {
+        const settings = AuthService.getSettings();
+        targetPrinter = settings.label_printer_name || settings.labelPrinterName;
+      }
+      if (!targetPrinter && process.platform === 'win32') {
+        const printers = await HardwareService.getConnectedPrinters();
+        const tsc = printers.find((p) =>
+          p.name.toLowerCase().includes('tsc') ||
+          p.name.toLowerCase().includes('label') ||
+          p.name.toLowerCase().includes('barcode')
+        );
+        if (tsc) targetPrinter = tsc.name;
+      }
+      if (!targetPrinter) {
+        res.status(400).json({ success: false, message: 'No TSC printer specified or detected' });
+        return;
+      }
+      const result = await HardwareService.calibrateTscPrinter(targetPrinter, { widthMm, heightMm, sensorType });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, message: clientMessage(err) });
@@ -834,8 +939,81 @@ export class HardwareController {
 
   static async testDtsPrinter(req: Request, res: Response): Promise<void> {
     try {
-      const { printerName } = req.body;
-      const result = await HardwareService.testDtsPrinter(printerName);
+      const { printerName, width } = req.body;
+      const result = await HardwareService.testDtsPrinter(printerName, { width });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async validateTspl(req: Request, res: Response): Promise<void> {
+    try {
+      const { tsplCommand } = req.body;
+      let tspl = tsplCommand;
+      if (!tspl) {
+        tspl = HardwareService.generateTsplCommands([
+          {
+            name: 'TEST PRODUCT',
+            categoryName: 'GARMENT',
+            color: 'Pure White',
+            size: '40',
+            sellingPrice: 1500,
+            sku: 'B4L-SLI-20460',
+            barcode: '890100002396',
+            quantity: 1,
+          },
+        ]);
+      }
+      const validation = HardwareService.validateTspl(tspl);
+      res.json({ success: true, tspl, validation });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async inspectEscPos(req: Request, res: Response): Promise<void> {
+    try {
+      const { width, cashDrawer } = req.body;
+      const sampleSale = {
+        receiptNo: 'REC-TEST-001',
+        created_at: new Date().toISOString(),
+        cashier_name: 'DIAGNOSTIC CASHIER',
+        payment_method: 'CASH',
+        items: [
+          { name: 'Casual Moccasins', size: '40', quantity: 1, unit_price: 1500, total_price: 1500 },
+        ],
+        subtotal: 1500,
+        discount: 0,
+        grand_total: 1500,
+        amount_paid: 2000,
+        change_amount: 500,
+      };
+      const buffer = HardwareService.generateEscPosReceipt(sampleSale, { width: width || '80mm', kickDrawer: !!cashDrawer });
+      const breakdown = HardwareService.parseEscPosCommands(buffer);
+      res.json({ success: true, breakdown });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async getPrintQueue(_req: Request, res: Response): Promise<void> {
+    try {
+      const queue = RawPrinterService.getPrintQueue();
+      res.json({ success: true, queue });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: clientMessage(err) });
+    }
+  }
+
+  static async retryPrintJob(req: Request, res: Response): Promise<void> {
+    try {
+      const { jobId } = req.body;
+      if (!jobId) {
+        res.status(400).json({ success: false, message: 'jobId parameter is required' });
+        return;
+      }
+      const result = await RawPrinterService.retryJob(jobId);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, message: clientMessage(err) });
@@ -844,12 +1022,59 @@ export class HardwareController {
 
   static async printTspl(req: Request, res: Response): Promise<void> {
     try {
-      const { items, printerName, widthMm, heightMm } = req.body;
-      const tspl = HardwareService.generateTsplCommands(items, { widthMm, heightMm });
-      if (printerName) {
-        await HardwareService.sendRawToPrinter(printerName, tspl);
+      const { items, printerName, widthMm, heightMm, gapMm, format } = req.body;
+      const isEpl = format === 'EPL' || format === 'EPL2';
+      const payload = isEpl
+        ? HardwareService.generateEplCommands(items, { widthMm, heightMm, gapMm })
+        : HardwareService.generateTsplCommands(items, { widthMm, heightMm, gapMm });
+
+      const validation = isEpl ? { isValid: true, checks: {}, errors: [] } : HardwareService.validateTspl(payload);
+      const byteLength = Buffer.from(payload, 'utf-8').length;
+
+      let targetPrinter = printerName;
+      const isVirtual = !!(targetPrinter && (targetPrinter.includes('VIRTUAL') || targetPrinter.includes('Simulator')));
+
+      if (!targetPrinter && !isVirtual) {
+        const settings = AuthService.getSettings();
+        targetPrinter = settings.label_printer_name || settings.labelPrinterName;
       }
-      res.json({ success: true, tspl, message: 'TSPL command dispatched to TSC printer' });
+      if (!targetPrinter && process.platform === 'win32') {
+        const printers = await HardwareService.getConnectedPrinters();
+        const tsc = printers.find((p) =>
+          p.name.toLowerCase().includes('tsc') ||
+          p.name.toLowerCase().includes('label') ||
+          p.name.toLowerCase().includes('barcode')
+        );
+        if (tsc) targetPrinter = tsc.name;
+      }
+
+      let printSuccess = false;
+      let printMessage = isVirtual
+        ? `RAW TSPL command generated for Virtual TSC Simulator (${byteLength} bytes)`
+        : `${isEpl ? 'EPL' : 'TSPL'} command generated`;
+
+      if (targetPrinter && !isVirtual) {
+        try {
+          printSuccess = await HardwareService.sendRawToPrinter(targetPrinter, payload, isEpl ? 'EPL Label Batch' : 'TSC Label Batch');
+          printMessage = printSuccess
+            ? `RAW job submitted successfully to "${targetPrinter}" (${byteLength} bytes)`
+            : `RAW write failed for "${targetPrinter}"`;
+        } catch (err: any) {
+          console.warn(`[HARDWARE WARNING] Could not dispatch to printer "${targetPrinter}":`, err.message);
+          printMessage = `Printer "${targetPrinter}" unavailable or offline (${err.message}). RAW command generated successfully.`;
+        }
+      }
+
+      res.json({
+        success: true,
+        payload,
+        byteLength,
+        validation,
+        format: isEpl ? 'EPL' : 'TSPL',
+        printerUsed: targetPrinter || null,
+        isVirtual,
+        message: printMessage,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, message: clientMessage(err) });
     }
@@ -859,10 +1084,59 @@ export class HardwareController {
     try {
       const { sale, printerName, width, autoCut, kickDrawer } = req.body;
       const buffer = HardwareService.generateEscPosReceipt(sale, { width, autoCut, kickDrawer });
-      if (printerName) {
-        await HardwareService.sendRawToPrinter(printerName, buffer);
+      const breakdown = HardwareService.parseEscPosCommands(buffer);
+
+      let targetPrinter = printerName;
+      const isVirtual = !!(targetPrinter && (targetPrinter.includes('VIRTUAL') || targetPrinter.includes('Simulator')));
+
+      if (!targetPrinter && !isVirtual) {
+        const settings = AuthService.getSettings();
+        targetPrinter = settings.receipt_printer_name || settings.receiptPrinterName;
       }
+      if (!targetPrinter && process.platform === 'win32') {
+        const printers = await HardwareService.getConnectedPrinters();
+        const dts = printers.find((p) =>
+          p.name.toLowerCase().includes('dts') ||
+          p.name.toLowerCase().includes('pos') ||
+          p.name.toLowerCase().includes('thermal') ||
+          p.name.toLowerCase().includes('receipt') ||
+          p.name.toLowerCase().includes('80')
+        );
+        if (dts) targetPrinter = dts.name;
+      }
+
+      let printSuccess = false;
+      let printMessage = isVirtual
+        ? `RAW ESC/POS buffer generated for Virtual DTS Simulator (${breakdown.byteLength} bytes)`
+        : `ESC/POS buffer generated`;
+
+      if (targetPrinter && !isVirtual) {
+        try {
+          printSuccess = await HardwareService.sendRawToPrinter(targetPrinter, buffer, 'DTS Thermal Receipt');
+          printMessage = printSuccess
+            ? `RAW job submitted successfully to "${targetPrinter}" (${breakdown.byteLength} bytes)`
+            : `RAW write failed for "${targetPrinter}"`;
+        } catch (err: any) {
+          console.warn(`[HARDWARE WARNING] Could not dispatch receipt to printer "${targetPrinter}":`, err.message);
+          printMessage = `Sale saved successfully, but receipt printing failed. (${err.message})`;
+        }
+      }
+
+      if (req.headers.accept?.includes('application/json') || req.query.format === 'json') {
+        res.json({
+          success: true,
+          byteLength: breakdown.byteLength,
+          hexDump: breakdown.hexDump,
+          interpretedCommands: breakdown.interpretedCommands,
+          printerUsed: targetPrinter || null,
+          isVirtual,
+          message: printMessage,
+        });
+        return;
+      }
+
       res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('X-Print-Status', encodeURIComponent(printMessage));
       res.send(buffer);
     } catch (err: any) {
       res.status(500).json({ success: false, message: clientMessage(err) });

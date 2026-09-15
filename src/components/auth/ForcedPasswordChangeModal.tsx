@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ShieldAlert, Lock, CheckCircle2, AlertCircle, LogOut } from 'lucide-react';
+import { ShieldAlert, Lock, CheckCircle2, AlertCircle, LogOut, Key } from 'lucide-react';
 
 export const ForcedPasswordChangeModal: React.FC = () => {
   const { user, changePassword, logout } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [newPin, setNewPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -37,9 +38,14 @@ export const ForcedPasswordChangeModal: React.FC = () => {
       return;
     }
 
+    if (newPin && !/^\d{4,8}$/.test(newPin.trim())) {
+      setError('Quick PIN must be between 4 and 8 numeric digits.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await changePassword(currentPassword, newPassword);
+      await changePassword(currentPassword, newPassword, newPin ? newPin.trim() : undefined);
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Failed to update password. Please check your current password.');
@@ -73,13 +79,13 @@ export const ForcedPasswordChangeModal: React.FC = () => {
         {success ? (
           <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center space-x-3 text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-5 h-5 shrink-0" />
-            <span className="text-sm font-semibold">Password updated successfully! Redirecting...</span>
+            <span className="text-sm font-semibold">Password & PIN updated successfully!</span>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                Current / Default Password
+                Current Password
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -87,7 +93,7 @@ export const ForcedPasswordChangeModal: React.FC = () => {
                   type="password"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="e.g. admin123 or staff123"
+                  placeholder="Enter current password"
                   required
                   className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
@@ -104,7 +110,7 @@ export const ForcedPasswordChangeModal: React.FC = () => {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Enter strong password"
+                  placeholder="Enter new strong password"
                   required
                   minLength={8}
                   className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -130,6 +136,29 @@ export const ForcedPasswordChangeModal: React.FC = () => {
               </div>
             </div>
 
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  New 4-Digit Quick PIN (for fast POS login)
+                </label>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold">Recommended</span>
+              </div>
+              <div className="relative">
+                <Key className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="e.g. 4-digit code (e.g. 5839)"
+                  maxLength={8}
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono tracking-widest"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Sets your new fast login PIN so the old default PIN will no longer work.
+              </p>
+            </div>
+
             <div className="pt-2 flex items-center justify-between">
               <button
                 type="button"
@@ -145,7 +174,7 @@ export const ForcedPasswordChangeModal: React.FC = () => {
                 disabled={loading}
                 className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-slate-950 font-bold rounded-xl text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50"
               >
-                {loading ? 'Updating Password...' : 'Save & Continue'}
+                {loading ? 'Updating Password & PIN...' : 'Save & Continue'}
               </button>
             </div>
           </form>

@@ -58,11 +58,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'pos', label: 'POS Billing Terminal', icon: ShoppingCart },
     { id: 'sales', label: 'Sales & Orders', icon: Receipt, roles: ['ADMIN', 'MANAGER', 'STAFF'] },
     { id: 'customers', label: 'Customer Records', icon: User, roles: ['ADMIN', 'MANAGER', 'STAFF'] },
-    { id: 'inventory', label: 'Product Inventory', icon: Boxes, badge: lowStockCount },
+    { id: 'inventory', label: 'Product Inventory', icon: Boxes, badge: lowStockCount, roles: ['ADMIN', 'MANAGER'] },
     { id: 'purchases', label: 'Purchases & Invoices', icon: ShoppingBag, roles: ['ADMIN', 'MANAGER'] },
     { id: 'suppliers', label: 'Suppliers & Payables', icon: Truck, roles: ['ADMIN', 'MANAGER'] },
     { id: 'import', label: 'Bulk Import', icon: FileSpreadsheet, roles: ['ADMIN', 'MANAGER'] },
-    { id: 'khata', label: 'Customer Khata', icon: CreditCard },
+    { id: 'khata', label: 'Customer Khata', icon: CreditCard, roles: ['ADMIN', 'MANAGER'] },
     { id: 'expenses', label: 'Expenses & Payroll', icon: DollarSign, roles: ['ADMIN', 'MANAGER'] },
     { id: 'reports', label: 'Financial Analytics', icon: BarChart3, roles: ['ADMIN', 'MANAGER'] },
     { id: 'settings', label: 'Settings & Backups', icon: Settings, roles: ['ADMIN'] },
@@ -87,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="w-10 h-10 rounded-2xl bg-amber-400/20 p-1 flex items-center justify-center shadow-xs flex-shrink-0 border border-amber-300/40 overflow-hidden">
               <img
                 src={brandLogo}
-                alt="Brand 4 Less Logo"
+                alt="Brands 4 Less Logo"
                 className="w-full h-full object-contain rounded-xl"
               />
             </div>

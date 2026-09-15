@@ -26,6 +26,7 @@ import {
   Boxes,
   CreditCard,
   Receipt,
+  BarChart3,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CategoryAvatar } from '../components/common/CategoryAvatar';
@@ -42,7 +43,7 @@ import {
   LineElement,
   Filler,
 } from 'chart.js';
-import { Bar } from 'react-chartjs-2';
+import { Bar, Line } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
@@ -63,7 +64,9 @@ interface DashboardPageProps {
 export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<'WEEKLY' | 'MONTHLY' | 'YEARLY'>('MONTHLY');
+  const [timeFrame, setTimeFrame] = useState<'7_DAYS' | '12_MONTHS'>('7_DAYS');
+  const [chartMode, setChartMode] = useState<'BAR' | 'LINE'>('BAR');
+  const [selectedItemIdx, setSelectedItemIdx] = useState<number>(6);
   const [searchQuery, setSearchQuery] = useState('');
   const { isDark } = useTheme();
 
@@ -98,7 +101,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
 
   const {
     today,
+    thisWeek,
     thisMonth,
+    thisYear,
     operational,
     salesTrend = [],
     weeklySalesTrend = [],
@@ -109,92 +114,136 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
     topProducts = [],
   } = data || {};
 
-  // Dynamic Chart Setup matching WEEKLY / MONTHLY / YEARLY
-  let chartLabels: string[] = [];
-  let chartSalesData: number[] = [];
-  let chartProfitData: number[] = [];
-  let chartPurchasesData: number[] = [];
+  const currentMonthIdx = new Date().getMonth();
 
-  if (period === 'WEEKLY') {
-    const weeklyList = weeklySalesTrend.length > 0 ? weeklySalesTrend : salesTrend;
-    if (weeklyList.length > 0) {
-      chartLabels = weeklyList.map((d: any) => {
-        const parts = String(d.sale_date).split('-');
-        if (parts.length === 3) {
-          const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-          return dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
-        }
-        return d.sale_date;
-      });
-      chartSalesData = weeklyList.map((d: any) => Number(d.daily_sales || 0));
-      chartProfitData = weeklyList.map((d: any) => Number(d.daily_profit || Math.round(Number(d.daily_sales || 0) * 0.45)));
-      chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
-    } else {
-      chartLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      chartSalesData = [0, 0, 0, 0, 0, 0, Number(today?.sales || 0)];
-      chartProfitData = chartSalesData.map((s) => Math.round(s * 0.45));
-      chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
-    }
-  } else if (period === 'YEARLY') {
-    const currentYear = new Date().getFullYear();
-    const defaultYears = [currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map(String);
-    chartLabels = defaultYears;
-    chartSalesData = defaultYears.map((yr) => {
-      const found = yearlySalesTrend.find((y: any) => String(y.year_num) === yr);
-      return found ? Number(found.total_sales) : (yr === String(currentYear) ? Number(thisMonth?.sales || today?.sales || 0) : 0);
-    });
-    chartProfitData = defaultYears.map((yr) => {
-      const found = yearlySalesTrend.find((y: any) => String(y.year_num) === yr);
-      return found ? Number(found.total_profit) : Math.round(chartSalesData[defaultYears.indexOf(yr)] * 0.45);
-    });
-    chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
-  } else {
-    // MONTHLY (Default)
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    chartLabels = months;
-    chartSalesData = months.map((_, i) => {
-      const monthNum = String(i + 1).padStart(2, '0');
-      const matched = monthlySalesTrend.find((m: any) => m.month_num === monthNum);
-      return matched ? Number(matched.total_sales) : (thisMonth?.sales && i === new Date().getMonth() ? thisMonth.sales : 0);
-    });
-    chartProfitData = chartSalesData.map((s) => Math.round(s * 0.45));
-    chartPurchasesData = chartSalesData.map((s) => Math.round(s * 0.35));
+  // Dynamic KPI Card Metrics based on selected timeFrame (strictly ACTUAL data)
+  let kpiTitleSales = "Weekly Retail Sales";
+  let kpiSalesValue = Number(thisWeek?.sales || 0);
+  let kpiSalesSubtext = "Past 7 Days Total";
+
+  let kpiTitleProfit = "Weekly Net Profit";
+  let kpiProfitValue = Number(thisWeek?.netProfit ?? thisWeek?.grossProfit ?? 0);
+  let kpiProfitSubtext = "Past 7 Days Profit";
+
+  let kpiTitleOrders = "Weekly Completed Orders";
+  let kpiOrdersValue = Number(thisWeek?.transactions || 0);
+  let kpiOrdersSubtext = "7-Day Volume";
+
+  if (timeFrame === '12_MONTHS') {
+    kpiTitleSales = "Annual Retail Sales";
+    kpiSalesValue = Number(thisYear?.sales || thisMonth?.sales || 0);
+    kpiSalesSubtext = "Year-to-Date Total";
+
+    kpiTitleProfit = "Annual Net Profit";
+    kpiProfitValue = Number(thisYear?.netProfit ?? thisMonth?.netProfit ?? 0);
+    kpiProfitSubtext = "Annual Trading Margin";
+
+    kpiTitleOrders = "Annual Completed Orders";
+    kpiOrdersValue = Number(thisYear?.transactions || thisMonth?.transactions || 0);
+    kpiOrdersSubtext = "Year-to-Date Volume";
   }
 
-  const activityChartData = {
-    labels: chartLabels,
+  // 1. Strictly REAL 7 Days Trend
+  const days7List: any[] = [];
+  const todayDate = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(todayDate);
+    d.setDate(d.getDate() - i);
+    const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const found = (weeklySalesTrend || []).find((r: any) => String(r.sale_date).slice(0, 10) === dStr);
+    days7List.push(
+      found || {
+        sale_date: dStr,
+        daily_sales: 0,
+        daily_profit: 0,
+        transactions: 0,
+      }
+    );
+  }
+
+  const days7Items = days7List.map((d: any, idx: number) => {
+    const isLast = idx === days7List.length - 1;
+    const parts = String(d.sale_date).split('-');
+    let dateObj = new Date();
+    if (parts.length === 3) {
+      dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    }
+    const dayShort = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const dayLabel = isLast ? 'Today' : dayShort;
+    const monthShort = dateObj.toLocaleDateString('en-US', { month: 'short' });
+    const dayNum = dateObj.getDate();
+    const fullLabel = isLast ? `Today (${dayNum} ${monthShort})` : `${dayShort} (${dayNum} ${monthShort})`;
+
+    return {
+      label: dayLabel,
+      fullLabel,
+      sales: Number(d.daily_sales || 0),
+      profit: Number(d.daily_profit || 0),
+      transactions: Number(d.transactions || 0),
+      isToday: isLast,
+    };
+  });
+
+  // 2. Strictly REAL 12 Months Trend
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthsList = monthNames.map((name, i) => {
+    const monthNum = String(i + 1).padStart(2, '0');
+    const matched = (monthlySalesTrend || []).find(
+      (m: any) => String(m.month_num).padStart(2, '0') === monthNum
+    );
+    const currentYear = new Date().getFullYear();
+    return {
+      label: name,
+      fullLabel: `${name} ${currentYear}`,
+      sales: matched ? Number(matched.total_sales || 0) : 0,
+      profit: matched ? Number(matched.total_profit || 0) : 0,
+      transactions: matched ? Number(matched.transactions || 0) : 0,
+      isToday: i === currentMonthIdx,
+    };
+  });
+
+  const currentItems = timeFrame === '7_DAYS' ? days7Items : monthsList;
+  const activeIdx = Math.min(selectedItemIdx, currentItems.length - 1);
+  const activeItem = currentItems[activeIdx] || currentItems[currentItems.length - 1];
+  const maxSales = Math.max(...currentItems.map((it) => it.sales), 1);
+
+  // Compact number formatting helper matching Image 2 (e.g. 160k, 625k, 69k, 4k, 0)
+  const formatCompact = (val: number) => {
+    const n = Number(val) || 0;
+    if (n === 0) return '0';
+    if (n >= 1_000_000) {
+      return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    }
+    if (n >= 1_000) {
+      return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+    }
+    return n.toLocaleString();
+  };
+
+  const lineChartData = {
+    labels: currentItems.map((it) => it.label),
     datasets: [
       {
         label: 'Gross Retail Sales (PKR)',
-        data: chartSalesData,
-        backgroundColor: isDark ? '#ffffff' : '#0f172a',
-        borderRadius: 8,
-        stack: 'Stack 0',
-      },
-      {
-        label: 'Trading Gross Profit (PKR)',
-        data: chartProfitData,
-        backgroundColor: isDark ? '#475569' : '#94a3b8',
-        borderRadius: 8,
-        stack: 'Stack 0',
-      },
-      {
-        label: 'Inbound Cost Basis',
-        data: chartPurchasesData,
-        backgroundColor: isDark ? '#1e293b' : '#cbd5e1',
-        borderRadius: 8,
-        stack: 'Stack 0',
+        data: currentItems.map((it) => it.sales),
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+        tension: 0.35,
+        fill: true,
+        pointBackgroundColor: '#10b981',
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7,
       },
     ],
   };
 
-  const chartOptions = {
+  const lineChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: {
-        display: false,
-      },
+      legend: { display: false },
       tooltip: {
         backgroundColor: isDark ? '#1e293b' : '#0f172a',
         titleFont: { size: 12, weight: 'bold' as any },
@@ -216,9 +265,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
     },
   };
 
-  const totalSalesToDisplay = Number(thisMonth?.sales || today?.sales || 0);
-  const netProfitToDisplay = Number(thisMonth?.netProfit || thisMonth?.grossProfit || today?.grossProfit || 0);
-  const transactionsToDisplay = Number(thisMonth?.transactions || today?.transactions || 0);
+  const totalSalesToDisplay = kpiSalesValue;
+  const netProfitToDisplay = kpiProfitValue;
+  const transactionsToDisplay = kpiOrdersValue;
   const inventoryValuation = Number(operational?.inventoryCostValue || 0);
 
   return (
@@ -243,21 +292,34 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
 
         {/* Right Search, Period Tabs & Actions */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Period Selector Tabs (Weekly, Monthly, Yearly) */}
+          {/* Period Selector Tabs */}
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-full border border-slate-200/80 dark:border-slate-700/80 text-xs font-bold">
-            {(['WEEKLY', 'MONTHLY', 'YEARLY'] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`px-3.5 py-1.5 rounded-full transition ${
-                  period === p
-                    ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950 shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {p.charAt(0) + p.slice(1).toLowerCase()}
-              </button>
-            ))}
+            <button
+              onClick={() => {
+                setTimeFrame('7_DAYS');
+                setSelectedItemIdx(6);
+              }}
+              className={`px-3.5 py-1.5 rounded-full transition ${
+                timeFrame === '7_DAYS'
+                  ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Last 7 Days
+            </button>
+            <button
+              onClick={() => {
+                setTimeFrame('12_MONTHS');
+                setSelectedItemIdx(currentMonthIdx);
+              }}
+              className={`px-3.5 py-1.5 rounded-full transition ${
+                timeFrame === '12_MONTHS'
+                  ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              12 Months
+            </button>
           </div>
 
           {/* Quick Refresh */}
@@ -273,19 +335,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
 
       {/* ── 4 KPI METRIC CARDS (EXACT PRIMENG DESIGN) ────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 1. Today & Month Net Sales */}
+        {/* 1. Period Retail Sales */}
         <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow flex flex-col justify-between h-36 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Today's Retail Sales</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{kpiTitleSales}</span>
             <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
               <ShoppingCart className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-black text-slate-950 dark:text-white tracking-tight">
-            PKR {Number(today?.sales || 0).toLocaleString()}
+            PKR {kpiSalesValue.toLocaleString()}
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-slate-400">Month-to-Date: PKR {Number(thisMonth?.sales || 0).toLocaleString()}</span>
+            <span className="text-[10px] text-slate-400">{kpiSalesSubtext}</span>
             <span className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-black text-[10px]">
               Live
             </span>
@@ -295,7 +357,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
         {/* 2. Net Operating Flow / Profit */}
         <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow flex flex-col justify-between h-36 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Net Trading Profit</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{kpiTitleProfit}</span>
             <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <ArrowRightLeft className="w-4 h-4" />
             </div>
@@ -304,7 +366,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
             PKR {netProfitToDisplay.toLocaleString()}
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-slate-400">After COGS & Expenses</span>
+            <span className="text-[10px] text-slate-400">{kpiProfitSubtext}</span>
             <span className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-black text-[10px]">
               {totalSalesToDisplay > 0 ? Math.round((netProfitToDisplay / totalSalesToDisplay) * 100) : 0}% Margin
             </span>
@@ -314,7 +376,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
         {/* 3. Completed Customer Tickets */}
         <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-5 rounded-3xl soft-shadow flex flex-col justify-between h-36 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Completed Orders</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{kpiTitleOrders}</span>
             <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
               <Zap className="w-4 h-4" />
             </div>
@@ -323,7 +385,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
             {transactionsToDisplay} Orders
           </div>
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-slate-400">Today: {today?.transactions || 0} tickets</span>
+            <span className="text-[10px] text-slate-400">{kpiOrdersSubtext}</span>
             <span className="px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 font-black text-[10px]">
               Live
             </span>
@@ -358,40 +420,195 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab }) =>
         </div>
       </div>
 
-      {/* ── MIDDLE CARD: PORTFOLIO ACTIVITY STACKED CHART ────────────────── */}
-      <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-6 rounded-3xl soft-shadow space-y-4 transition-colors">
+      {/* ── MIDDLE CARD: SALES OVERVIEW (EXACT IMAGE 2 REPLICA) ──────────── */}
+      <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 p-6 rounded-3xl soft-shadow space-y-5 transition-colors">
+        {/* Top Controls Bar: [Last 7 Days] [12 Months] and [Bar |||] [Line ~] */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              {period === 'WEEKLY'
-                ? 'Weekly Sales & Revenue Trend (Last 7 Days)'
-                : period === 'YEARLY'
-                ? 'Multi-Year Sales & Revenue Trend'
-                : 'Annual 12-Month Sales & Revenue Trend'}
-            </h3>
-            <p className="text-xs text-slate-400">Multi-tone breakdown of retail sales, gross margins, and inventory cost basis</p>
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">Store Sales Performance</h3>
+            <p className="text-xs text-slate-400 dark:text-slate-500">Live verified database sales data — click any period to view breakdown</p>
           </div>
 
-          {/* Chart Legends */}
-          <div className="flex items-center space-x-5 text-xs text-slate-600 dark:text-slate-400 font-semibold">
-            <div className="flex items-center space-x-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-900 dark:bg-white" />
-              <span>Gross Retail Sales</span>
+          <div className="flex items-center space-x-2.5">
+            {/* Timeframe Switcher: Last 7 Days vs 12 Months */}
+            <div className="flex bg-slate-100 dark:bg-slate-800/90 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setTimeFrame('7_DAYS');
+                  setSelectedItemIdx(6);
+                }}
+                className={`px-3.5 py-1.5 rounded-xl transition ${
+                  timeFrame === '7_DAYS'
+                    ? 'bg-white text-slate-950 dark:bg-slate-900 dark:text-white shadow-sm font-black'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Last 7 Days
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTimeFrame('12_MONTHS');
+                  setSelectedItemIdx(currentMonthIdx);
+                }}
+                className={`px-3.5 py-1.5 rounded-xl transition ${
+                  timeFrame === '12_MONTHS'
+                    ? 'bg-white text-slate-950 dark:bg-slate-900 dark:text-white shadow-sm font-black'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                12 Months
+              </button>
             </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-400 dark:bg-slate-500" />
-              <span>Trading Profit</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700" />
-              <span>Inbound Cost Basis</span>
+
+            {/* Chart Style Switcher: Bar vs Line */}
+            <div className="flex bg-slate-100 dark:bg-slate-800/90 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 text-xs">
+              <button
+                type="button"
+                onClick={() => setChartMode('BAR')}
+                title="Bar Chart"
+                className={`p-1.5 rounded-xl transition ${
+                  chartMode === 'BAR'
+                    ? 'bg-white text-emerald-600 dark:bg-slate-900 dark:text-emerald-400 shadow-sm font-black'
+                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartMode('LINE')}
+                title="Line Trend"
+                className={`p-1.5 rounded-xl transition ${
+                  chartMode === 'LINE'
+                    ? 'bg-white text-emerald-600 dark:bg-slate-900 dark:text-emerald-400 shadow-sm font-black'
+                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Chart Canvas */}
-        <div className="h-64 w-full">
-          <Bar data={activityChartData} options={chartOptions} />
+        {/* Selected Period Banner (Exact Image 2 banner) */}
+        <div className="bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200/80 dark:border-emerald-800/50 rounded-2xl p-4 flex items-center justify-between transition">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <div>
+              <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                {activeItem?.fullLabel || 'Today'}
+              </h4>
+              <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">Selected Period</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 mr-2">Total Sales:</span>
+            <span className="text-base sm:text-lg font-black text-slate-950 dark:text-white">
+              Rs {Number(activeItem?.sales || 0).toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* Chart Visualization Area */}
+        {chartMode === 'BAR' ? (
+          <div className="bg-slate-50/50 dark:bg-slate-900/30 rounded-3xl p-4 sm:p-6 border border-slate-100 dark:border-slate-800/80">
+            <div className={`grid gap-2 sm:gap-4 items-end justify-center ${timeFrame === '7_DAYS' ? 'grid-cols-7 max-w-2xl mx-auto' : 'grid-cols-6 sm:grid-cols-12'}`}>
+              {currentItems.map((item, idx) => {
+                const isSelected = activeIdx === idx;
+                const heightPct = item.sales > 0 ? Math.min(100, Math.max(12, Math.round((item.sales / maxSales) * 100))) : 0;
+
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => setSelectedItemIdx(idx)}
+                    className="flex flex-col items-center cursor-pointer group"
+                  >
+                    {/* Top Value Label (Image 2 style: 160k, 625k, 69k, 4k) */}
+                    <span
+                      className={`text-[11px] sm:text-xs font-bold mb-2 transition-all ${
+                        item.isToday
+                          ? 'text-emerald-600 dark:text-emerald-400 font-black'
+                          : isSelected
+                          ? 'text-slate-950 dark:text-white font-black'
+                          : item.sales > 0
+                          ? 'text-slate-700 dark:text-slate-300 font-bold'
+                          : 'text-transparent group-hover:text-slate-400'
+                      }`}
+                    >
+                      {formatCompact(item.sales)}
+                    </span>
+
+                    {/* Background Track with Filled Bar */}
+                    <div
+                      className={`w-10 sm:w-14 h-40 sm:h-52 rounded-2xl p-1 flex flex-col justify-end relative overflow-hidden transition-all duration-300 ${
+                        isSelected
+                          ? 'bg-slate-200/90 dark:bg-slate-700/60 ring-2 ring-emerald-500'
+                          : 'bg-slate-100 dark:bg-slate-800/70 group-hover:bg-slate-200/60'
+                      }`}
+                    >
+                      {/* Bar Fill */}
+                      <div
+                        className={`w-full rounded-xl transition-all duration-500 ${
+                          item.isToday
+                            ? 'bg-gradient-to-t from-emerald-600 to-emerald-400 shadow-sm'
+                            : item.sales > 0
+                            ? 'bg-gradient-to-t from-slate-700 to-slate-600 dark:from-slate-400 dark:to-slate-300'
+                            : 'bg-transparent'
+                        }`}
+                        style={{ height: `${heightPct}%` }}
+                      />
+                    </div>
+
+                    {/* Bottom Day Label */}
+                    <span
+                      className={`text-xs font-bold mt-2.5 transition-colors ${
+                        item.isToday
+                          ? 'text-emerald-600 dark:text-emerald-400 font-black'
+                          : isSelected
+                          ? 'text-slate-900 dark:text-white font-black'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          /* Line Mode Canvas */
+          <div className="h-64 w-full bg-slate-50/50 dark:bg-slate-900/30 rounded-3xl p-4 border border-slate-100 dark:border-slate-800/80">
+            <Line data={lineChartData} options={lineChartOptions} />
+          </div>
+        )}
+
+        {/* Bottom Interactive Day Pills (Exact Image 2 bottom row) */}
+        <div className={`grid gap-2 sm:gap-2.5 ${timeFrame === '7_DAYS' ? 'grid-cols-7 max-w-2xl mx-auto' : 'grid-cols-4 sm:grid-cols-6 lg:grid-cols-12'}`}>
+          {currentItems.map((item, idx) => {
+            const isSelected = activeIdx === idx;
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setSelectedItemIdx(idx)}
+                className={`rounded-2xl p-2 sm:p-2.5 flex flex-col items-center justify-center border transition cursor-pointer text-center ${
+                  isSelected
+                    ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950 shadow-md border-slate-950 dark:border-white scale-[1.03]'
+                    : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 border-slate-200/80 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className={`text-[11px] sm:text-xs font-black ${isSelected ? 'text-white dark:text-slate-950' : 'text-slate-900 dark:text-white'}`}>
+                  {item.label}
+                </span>
+                <span className={`text-[10px] sm:text-[11px] font-bold mt-0.5 ${isSelected ? 'text-slate-300 dark:text-slate-600' : 'text-slate-400 dark:text-slate-500'}`}>
+                  {formatCompact(item.sales)}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

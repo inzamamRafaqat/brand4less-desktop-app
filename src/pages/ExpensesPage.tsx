@@ -390,10 +390,10 @@ export const ExpensesPage: React.FC = () => {
           </div>
 
           {/* Daily Table */}
-          <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors">
-            <div className="overflow-x-auto">
+          <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors flex flex-col">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                   <tr>
                     <th className="p-4">Date</th>
                     <th className="p-4">Category</th>
@@ -531,9 +531,9 @@ export const ExpensesPage: React.FC = () => {
               </button>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                   <tr>
                     <th className="p-4">Employee Name</th>
                     <th className="p-4">Role / Designation</th>

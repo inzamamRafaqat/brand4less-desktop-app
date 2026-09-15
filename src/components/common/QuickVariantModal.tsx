@@ -28,7 +28,7 @@ export const QuickVariantModal: React.FC<QuickVariantModalProps> = ({
   // Fields for brand new product
   const [newProductName, setNewProductName] = useState('');
   const [newCategoryId, setNewCategoryId] = useState('');
-  const [newBrand, setNewBrand] = useState('Brand 4 Less');
+  const [newBrand, setNewBrand] = useState('Brands 4 Less');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -39,7 +39,7 @@ export const QuickVariantModal: React.FC<QuickVariantModalProps> = ({
     const loadData = async () => {
       try {
         const [prodRes, catRes] = await Promise.all([
-          api.get('/products?limit=100'),
+          api.get('/products?limit=2000'),
           api.get('/categories'),
         ]);
         if (prodRes.products) {
@@ -79,7 +79,7 @@ export const QuickVariantModal: React.FC<QuickVariantModalProps> = ({
         const payload = {
           name: newProductName.trim(),
           categoryId: newCategoryId,
-          brand: newBrand.trim() || 'Brand 4 Less',
+          brand: newBrand.trim() || 'Brands 4 Less',
           origin: 'Local',
           variants: [
             {
@@ -156,7 +156,7 @@ export const QuickVariantModal: React.FC<QuickVariantModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in font-sans">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in font-sans">
       <div className="bg-white dark:bg-[#111827] rounded-3xl w-full max-w-lg p-6 shadow-2xl relative border border-slate-200 dark:border-slate-800 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center space-x-2">
@@ -253,7 +253,7 @@ export const QuickVariantModal: React.FC<QuickVariantModalProps> = ({
                     type="text"
                     value={newBrand}
                     onChange={(e) => setNewBrand(e.target.value)}
-                    placeholder="e.g. Brand 4 Less"
+                    placeholder="e.g. Brands 4 Less"
                     className="w-full py-2 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-xs"
                   />
                 </div>

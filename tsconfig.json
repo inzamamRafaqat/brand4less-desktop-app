@@ -15,10 +15,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@server/*": ["server/*"]
+      "@/*": ["./src/*"],
+      "@server/*": ["./server/*"]
     }
   },
   "include": ["src", "server", "electron", "tests"]

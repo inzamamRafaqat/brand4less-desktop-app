@@ -17,7 +17,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<void>;
   loginWithPin: (pin: string) => Promise<void>;
   verifyAdminPin: (pin: string) => Promise<boolean>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string, newPin?: string) => Promise<void>;
   logout: () => void;
   hasRole: (...roles: string[]) => boolean;
 }
@@ -84,8 +84,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const changePassword = async (currentPassword: string, newPassword: string) => {
-    const res = await api.post('/auth/change-password', { currentPassword, newPassword });
+  const changePassword = async (currentPassword: string, newPassword: string, newPin?: string) => {
+    const res = await api.post('/auth/change-password', { currentPassword, newPassword, newPin });
     if (res.success && user) {
       const updatedUser = { ...user, mustChangePassword: false };
       setUser(updatedUser);

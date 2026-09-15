@@ -126,7 +126,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: 'Brand 4 Less — Retail Management & POS Suite',
+    title: 'Brands 4 Less — Retail Management & POS Suite',
     ...(fs.existsSync(path.join(__dirname, '../public/favicon.ico')) ? { icon: path.join(__dirname, '../public/favicon.ico') } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -174,11 +174,17 @@ ipcMain.handle('get-printers', async () => {
   return [];
 });
 
-ipcMain.handle('print-receipt', async (event, { htmlContent, printerName, silent = true, paperWidth = '80mm' }) => {
+ipcMain.handle('print-receipt', async (event, { htmlContent, printerName, silent = true, paperWidth = '80mm', pageSize }) => {
   try {
+    const isPdfVirtual = !!(printerName && (
+      printerName.toLowerCase().includes('pdf') ||
+      printerName.toLowerCase().includes('xps') ||
+      printerName.toLowerCase().includes('onenote')
+    ));
+
     const printWindow = new BrowserWindow({
       show: false,
-      width: paperWidth === '58mm' ? 220 : 320,
+      width: paperWidth === '50mm' ? 240 : (paperWidth === '58mm' ? 220 : 320),
       height: 600,
       webPreferences: {
         nodeIntegration: false,
@@ -192,10 +198,13 @@ ipcMain.handle('print-receipt', async (event, { htmlContent, printerName, silent
 
     return new Promise((resolve) => {
       const printOptions = {
-        silent: silent !== false,
+        silent: isPdfVirtual ? false : (silent !== false),
         printBackground: true,
         margins: { marginType: 'none' },
       };
+      if (pageSize) {
+        printOptions.pageSize = pageSize;
+      }
       if (printerName) {
         printOptions.deviceName = printerName;
       }
@@ -212,6 +221,46 @@ ipcMain.handle('print-receipt', async (event, { htmlContent, printerName, silent
         }
       );
     });
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 1.1 Direct PDF Export
+ipcMain.handle('export-pdf', async (event, { htmlContent, defaultFilename = 'Brand4Less-Export.pdf', pageSize }) => {
+  try {
+    const printWindow = new BrowserWindow({
+      show: false,
+      width: 400,
+      height: 600,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        javascript: false,
+      },
+    });
+
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+
+    const pdfBuffer = await printWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: pageSize || { width: 50000, height: 30000 },
+      margins: { marginType: 'none' },
+    });
+
+    printWindow.close();
+
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultFilename,
+      filters: [{ name: 'PDF Document (*.pdf)', extensions: ['pdf'] }],
+    });
+
+    if (filePath) {
+      fs.writeFileSync(filePath, pdfBuffer);
+      return { success: true, filePath };
+    }
+    return { success: false, cancelled: true };
   } catch (err) {
     return { success: false, error: err.message };
   }

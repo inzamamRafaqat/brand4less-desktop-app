@@ -20,8 +20,12 @@ import {
   Smartphone,
   Cpu,
   Radio,
+  Upload,
+  FileUp,
+  X,
+  SlidersHorizontal,
 } from 'lucide-react';
-import { playScannerBeep } from '../hooks/useSpeedXScanner';
+import { playScannerBeep, simulateSpeedXScan } from '../hooks/useSpeedXScanner';
 
 export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'STORE' | 'HARDWARE' | 'USERS' | 'BACKUP'>('STORE');
@@ -44,16 +48,27 @@ export const SettingsPage: React.FC = () => {
   const [printers, setPrinters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedBackupFile, setSelectedBackupFile] = useState<File | null>(null);
+  const [importSuccessMsg, setImportSuccessMsg] = useState<string | null>(null);
+  const backupFileInputRef = React.useRef<HTMLInputElement>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [backupSuccess, setBackupSuccess] = useState(false);
 
   // Hardware Diagnostics State
   const [testingTsc, setTestingTsc] = useState(false);
+  const [validatingTsc, setValidatingTsc] = useState(false);
+  const [calibratingTsc, setCalibratingTsc] = useState(false);
   const [testingDts, setTestingDts] = useState(false);
+  const [inspectingDts, setInspectingDts] = useState(false);
   const [tscTestFeedback, setTscTestFeedback] = useState<string | null>(null);
+  const [tscCalibrateFeedback, setTscCalibrateFeedback] = useState<string | null>(null);
   const [dtsTestFeedback, setDtsTestFeedback] = useState<string | null>(null);
   const [scannerTestInput, setScannerTestInput] = useState('');
   const [scannedTestHistory, setScannedTestHistory] = useState<string[]>([]);
+  const [tsplValidationModal, setTsplValidationModal] = useState<{ open: boolean; tspl: string; validation: any } | null>(null);
+  const [escposInspectModal, setEscposInspectModal] = useState<{ open: boolean; byteLength: number; hexDump: string; commandBreakdown: any[] } | null>(null);
 
   // New User Form Modal
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
@@ -160,12 +175,80 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!['db', 'sqlite', 'sqlite3', 'bak'].includes(ext || '')) {
+        alert('Please select a valid SQLite database backup file (.db or .sqlite)');
+        return;
+      }
+      setSelectedBackupFile(file);
+      setImportModalOpen(true);
+    }
+  };
+
+  const handleExecuteImport = async (restoreImmediately: boolean) => {
+    if (!selectedBackupFile) return;
+
+    if (restoreImmediately) {
+      if (!confirm(`Warning: Restoring will overwrite the current active database with data from "${selectedBackupFile.name}".\n\nA safety snapshot of your current database will be created automatically first.\n\nAre you sure you want to proceed?`)) {
+        return;
+      }
+    }
+
+    setIsImportingBackup(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedBackupFile);
+      formData.append('restoreImmediately', restoreImmediately ? 'true' : 'false');
+
+      const res = await api.post('/backup/import', formData);
+      setImportModalOpen(false);
+      setSelectedBackupFile(null);
+      if (backupFileInputRef.current) {
+        backupFileInputRef.current.value = '';
+      }
+
+      if (restoreImmediately) {
+        alert(res.message || 'Backup imported and database restored successfully! Page will now reload.');
+        window.location.reload();
+      } else {
+        setImportSuccessMsg(res.message || 'Backup file imported successfully and added to available snapshots.');
+        setTimeout(() => setImportSuccessMsg(null), 5000);
+        fetchSettingsAndData();
+      }
+    } catch (err: any) {
+      alert('Import failed: ' + err.message);
+    } finally {
+      setIsImportingBackup(false);
+    }
+  };
+
   const handleTestTsc = async () => {
     setTestingTsc(true);
     setTscTestFeedback(null);
     try {
-      const res = await api.post('/hardware/test-tsc', { printerName: settings.labelPrinter || undefined });
-      setTscTestFeedback(res.message || 'TSPL calibration test command sent to TSC printer.');
+      const res = await api.post('/hardware/print-tspl', {
+        items: [
+          {
+            name: 'Casual Moccasins',
+            categoryName: 'GARMENT',
+            color: 'Pure White',
+            size: '40',
+            sellingPrice: 1500,
+            sku: 'B4L-SLI-20460',
+            barcode: '890100002396',
+            quantity: 1,
+          },
+        ],
+        printerName: settings.labelPrinter || undefined,
+        widthMm: 50,
+        heightMm: 30,
+        gapMm: 2,
+        format: 'TSPL',
+      });
+      setTscTestFeedback(res.message || 'TSPL test label RAW job dispatched.');
     } catch (err: any) {
       setTscTestFeedback('Error: ' + err.message);
     } finally {
@@ -173,12 +256,62 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleValidateTsc = async () => {
+    setValidatingTsc(true);
+    try {
+      const res = await api.post('/hardware/validate-tspl', {});
+      if (res.success) {
+        setTsplValidationModal({ open: true, tspl: res.tspl, validation: res.validation });
+      }
+    } catch (err: any) {
+      alert('TSPL Validation Error: ' + err.message);
+    } finally {
+      setValidatingTsc(false);
+    }
+  };
+
+  const handleCalibrateTsc = async () => {
+    setCalibratingTsc(true);
+    setTscCalibrateFeedback(null);
+    try {
+      const res = await api.post('/hardware/calibrate-tsc', {
+        printerName: settings.labelPrinter || undefined,
+        widthMm: settings.labelWidthMm || 50,
+        heightMm: settings.labelHeightMm || 30,
+      });
+      setTscCalibrateFeedback(res.message || 'TSC gap calibration command dispatched.');
+    } catch (err: any) {
+      setTscCalibrateFeedback('Error: ' + err.message);
+    } finally {
+      setCalibratingTsc(false);
+    }
+  };
+
   const handleTestDts = async () => {
     setTestingDts(true);
     setDtsTestFeedback(null);
     try {
-      const res = await api.post('/hardware/test-dts', { printerName: settings.receiptPrinter || undefined });
-      setDtsTestFeedback(res.message || 'ESC/POS test receipt slip dispatched to DTS thermal printer.');
+      const sampleSale = {
+        invoice_number: 'REC-TEST-001',
+        created_at: new Date().toISOString(),
+        cashier_name: 'DIAGNOSTIC CASHIER',
+        payment_method: 'CASH',
+        items: [
+          { name: 'Casual Moccasins', size: '40', quantity: 1, unit_price: 1500, subtotal: 1500 },
+        ],
+        subtotal: 1500,
+        discount_amount: 0,
+        net_total: 1500,
+        paid_amount: 2000,
+      };
+      const res = await api.post('/hardware/print-escpos?format=json', {
+        sale: sampleSale,
+        printerName: settings.receiptPrinter || undefined,
+        width: settings.printerWidth || '80mm',
+        autoCut: settings.autoCutReceipt,
+        kickDrawer: settings.kickDrawer,
+      });
+      setDtsTestFeedback(res.message || 'ESC/POS test receipt slip dispatched.');
     } catch (err: any) {
       setDtsTestFeedback('Error: ' + err.message);
     } finally {
@@ -186,11 +319,34 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleScannerTestSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!scannerTestInput.trim()) return;
+  const handleInspectEscPos = async () => {
+    setInspectingDts(true);
+    try {
+      const res = await api.post('/hardware/inspect-escpos', {
+        width: settings.printerWidth || '80mm',
+        cashDrawer: settings.kickDrawer,
+      });
+      if (res.success && res.breakdown) {
+        setEscposInspectModal({
+          open: true,
+          byteLength: res.breakdown.byteLength,
+          hexDump: res.breakdown.hexDump,
+          commandBreakdown: res.breakdown.commandBreakdown,
+        });
+      }
+    } catch (err: any) {
+      alert('ESC/POS Inspection Error: ' + err.message);
+    } finally {
+      setInspectingDts(false);
+    }
+  };
+
+  const handleScannerTestSubmit = (e?: React.FormEvent, customCode?: string) => {
+    if (e) e.preventDefault();
+    const barcodeToScan = customCode || scannerTestInput.trim() || '890100002396';
     playScannerBeep();
-    setScannedTestHistory((prev) => [scannerTestInput.trim(), ...prev.slice(0, 4)]);
+    simulateSpeedXScan(barcodeToScan);
+    setScannedTestHistory((prev) => [barcodeToScan, ...prev.slice(0, 4)]);
     setScannerTestInput('');
   };
 
@@ -364,7 +520,7 @@ export const SettingsPage: React.FC = () => {
 
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Target TSC Device</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Target TSC Label Printer</label>
                   <select
                     value={settings.labelPrinter || ''}
                     onChange={(e) => setSettings({ ...settings, labelPrinter: e.target.value })}
@@ -391,21 +547,48 @@ export const SettingsPage: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 grid grid-cols-3 gap-2">
                   <button
+                    type="button"
                     onClick={handleTestTsc}
-                    disabled={testingTsc}
-                    className="w-full py-2.5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-sm"
+                    disabled={testingTsc || validatingTsc || calibratingTsc}
+                    className="py-2.5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-xl text-[11px] font-bold transition flex items-center justify-center space-x-1 shadow-sm"
                   >
                     {testingTsc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                    <span>{testingTsc ? 'Printing Test...' : 'Test TSC Label Printer'}</span>
+                    <span>{testingTsc ? 'Printing...' : 'Test TSPL RAW Job'}</span>
                   </button>
-                  {tscTestFeedback && (
-                    <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-2 text-center">
-                      {tscTestFeedback}
-                    </p>
-                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleValidateTsc}
+                    disabled={testingTsc || validatingTsc || calibratingTsc}
+                    className="py-2.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded-xl text-[11px] font-bold transition flex items-center justify-center space-x-1"
+                  >
+                    {validatingTsc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>Validate TSPL</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCalibrateTsc}
+                    disabled={testingTsc || validatingTsc || calibratingTsc}
+                    className="py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-xl text-[11px] font-bold transition flex items-center justify-center space-x-1 border border-slate-200 dark:border-slate-700"
+                  >
+                    {calibratingTsc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
+                    <span>Calibrate Sensor</span>
+                  </button>
                 </div>
+
+                {tscTestFeedback && (
+                  <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 text-center">
+                    {tscTestFeedback}
+                  </p>
+                )}
+                {tscCalibrateFeedback && (
+                  <p className="text-[11px] font-bold text-blue-600 dark:text-blue-400 text-center">
+                    {tscCalibrateFeedback}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -417,8 +600,8 @@ export const SettingsPage: React.FC = () => {
                     <Printer className="w-4 h-4" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900 dark:text-white">DTS Thermal Receipt Printer</h4>
-                    <span className="text-[10px] text-slate-400">ESC/POS 80mm / 58mm Engine</span>
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white">TS-80Z Thermal Receipt Printer</h4>
+                    <span className="text-[10px] text-slate-400">ESC/POS • 80mm • USB / Ethernet</span>
                   </div>
                 </div>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 text-[10px] font-bold">
@@ -428,7 +611,7 @@ export const SettingsPage: React.FC = () => {
 
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Target DTS Device</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Target DTS Thermal Printer</label>
                   <select
                     value={settings.receiptPrinter || ''}
                     onChange={(e) => setSettings({ ...settings, receiptPrinter: e.target.value })}
@@ -475,21 +658,32 @@ export const SettingsPage: React.FC = () => {
                   </label>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 grid grid-cols-2 gap-2">
                   <button
+                    type="button"
                     onClick={handleTestDts}
-                    disabled={testingDts}
-                    className="w-full py-2.5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-sm"
+                    disabled={testingDts || inspectingDts}
+                    className="py-2.5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-sm"
                   >
                     {testingDts ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                    <span>{testingDts ? 'Printing Test Slip...' : 'Test DTS Receipt Printer'}</span>
+                    <span>{testingDts ? 'Printing...' : 'Test ESC/POS RAW Job'}</span>
                   </button>
-                  {dtsTestFeedback && (
-                    <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-2 text-center">
-                      {dtsTestFeedback}
-                    </p>
-                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleInspectEscPos}
+                    disabled={testingDts || inspectingDts}
+                    className="py-2.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5"
+                  >
+                    {inspectingDts ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>Inspect ESC/POS Bytes</span>
+                  </button>
                 </div>
+                {dtsTestFeedback && (
+                  <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-2 text-center">
+                    {dtsTestFeedback}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -621,25 +815,65 @@ export const SettingsPage: React.FC = () => {
         <div className="space-y-4 max-w-4xl">
           <div className="p-6 bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl soft-shadow flex flex-wrap items-center justify-between gap-4 transition-colors">
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Create Database Snapshot Backup</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Database Backup & Recovery</h3>
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                Creates an immediate hot SQLite transactional snapshot in the <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">data/backups/</code> directory.
+                Create 100% transactional SQLite snapshots or import / restore backups from your computer or USB flash drive.
               </p>
             </div>
 
-            <button
-              onClick={handleCreateBackup}
-              disabled={isCreatingBackup}
-              className="px-6 py-3 bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs rounded-2xl shadow-sm transition flex items-center space-x-2 disabled:opacity-50"
-            >
-              {isCreatingBackup ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <Database className="w-4 h-4" />
-              )}
-              <span>{isCreatingBackup ? 'Creating Snapshot...' : 'Create Backup Now'}</span>
-            </button>
+            <div className="flex items-center gap-2.5">
+              {/* Hidden File Input for Import */}
+              <input
+                ref={backupFileInputRef}
+                type="file"
+                accept=".db,.sqlite,.sqlite3,.bak"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              <button
+                onClick={() => backupFileInputRef.current?.click()}
+                disabled={isImportingBackup || isCreatingBackup}
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl shadow-sm transition flex items-center space-x-2 disabled:opacity-50"
+                title="Upload or import a backup file (.db / .sqlite)"
+              >
+                {isImportingBackup ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
+                <span>{isImportingBackup ? 'Importing...' : 'Import Backup'}</span>
+              </button>
+
+              <button
+                onClick={handleCreateBackup}
+                disabled={isCreatingBackup || isImportingBackup}
+                className="px-5 py-3 bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs rounded-2xl shadow-sm transition flex items-center space-x-2 disabled:opacity-50"
+              >
+                {isCreatingBackup ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Database className="w-4 h-4" />
+                )}
+                <span>{isCreatingBackup ? 'Creating Snapshot...' : 'Create Backup Now'}</span>
+              </button>
+            </div>
           </div>
+
+          {/* Feedback banners */}
+          {backupSuccess && (
+            <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl flex items-center space-x-3 text-emerald-800 dark:text-emerald-300 text-xs font-bold animate-fade-in">
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>Snapshot backup created successfully in data/backups/!</span>
+            </div>
+          )}
+
+          {importSuccessMsg && (
+            <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl flex items-center space-x-3 text-emerald-800 dark:text-emerald-300 text-xs font-bold animate-fade-in">
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>{importSuccessMsg}</span>
+            </div>
+          )}
 
           <div className="bg-white dark:bg-[#111827] border border-slate-200/80 dark:border-slate-800 rounded-3xl overflow-hidden soft-shadow transition-colors">
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 font-bold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center justify-between">
@@ -653,67 +887,308 @@ export const SettingsPage: React.FC = () => {
               </button>
             </div>
 
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
-                <tr>
-                  <th className="p-4">Backup Filename</th>
-                  <th className="p-4">File Size</th>
-                  <th className="p-4">Created Date</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {backups.length === 0 ? (
+            <div className="overflow-x-auto overflow-y-auto max-h-[450px]">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-400 dark:text-slate-500">
-                      No backups created yet. Click "Create Backup Now" to create your first encrypted snapshot.
-                    </td>
+                    <th className="p-4">Backup Filename</th>
+                    <th className="p-4">File Size</th>
+                    <th className="p-4">Created Date</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
-                ) : (
-                  backups.map((b, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                      <td className="p-4 font-mono font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-                        <Database className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                        <span>{b.filename}</span>
-                      </td>
-                      <td className="p-4 font-mono text-slate-500 dark:text-slate-400">
-                        {b.sizeFormatted || b.size || `${(Number(b.sizeBytes || 0) / 1024 / 1024).toFixed(2)} MB`}
-                      </td>
-                      <td className="p-4 text-slate-500 dark:text-slate-400 font-mono text-[11px]">
-                        {new Date(b.createdAt).toLocaleString('en-US', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex items-center justify-end space-x-2">
-                          <button
-                            onClick={() => handleRestoreBackup(b.filename)}
-                            className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-400 rounded-lg text-xs font-bold transition inline-flex items-center space-x-1"
-                            title="Restore database from this snapshot"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>Restore</span>
-                          </button>
-
-                          <a
-                            href={api.downloadUrl(`/backup/download/${encodeURIComponent(b.filename)}`)}
-                            download
-                            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-950 dark:hover:bg-white hover:text-white dark:hover:text-slate-950 rounded-lg text-slate-700 dark:text-slate-300 text-xs font-bold transition inline-flex items-center space-x-1"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Download</span>
-                          </a>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {backups.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-8 text-center text-slate-400 dark:text-slate-500">
+                        No backups available. Click "Create Backup Now" or "Import Backup".
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    backups.map((b, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                        <td className="p-4 font-mono font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                          <Database className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          <span className="truncate max-w-[320px]">{b.filename}</span>
+                        </td>
+                        <td className="p-4 font-mono text-slate-500 dark:text-slate-400">
+                          {b.sizeFormatted || b.size || `${(Number(b.sizeBytes || 0) / 1024 / 1024).toFixed(2)} MB`}
+                        </td>
+                        <td className="p-4 text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                          {new Date(b.createdAt).toLocaleString('en-US', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end space-x-2">
+                            <button
+                              onClick={() => handleRestoreBackup(b.filename)}
+                              className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-400 rounded-lg text-xs font-bold transition inline-flex items-center space-x-1"
+                              title="Restore database from this snapshot"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Restore</span>
+                            </button>
+
+                            <a
+                              href={api.downloadUrl(`/backup/download/${encodeURIComponent(b.filename)}`)}
+                              download
+                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-950 dark:hover:bg-white hover:text-white dark:hover:text-slate-950 rounded-lg text-slate-700 dark:text-slate-300 text-xs font-bold transition inline-flex items-center space-x-1"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download</span>
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IMPORT BACKUP ACTION MODAL ── */}
+      {importModalOpen && selectedBackupFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in font-sans">
+          <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-scale-up">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Import Database Backup</h3>
+                  <p className="text-xs text-slate-400">Select how you want to handle this backup file</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setImportModalOpen(false);
+                  setSelectedBackupFile(null);
+                  if (backupFileInputRef.current) backupFileInputRef.current.value = '';
+                }}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Selected File Details */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-1">
+                <div className="text-[11px] uppercase font-bold text-slate-400 tracking-wider">Selected File</div>
+                <div className="text-sm font-bold font-mono text-slate-900 dark:text-white break-all">
+                  {selectedBackupFile.name}
+                </div>
+                <div className="text-xs text-slate-500 font-mono">
+                  {(selectedBackupFile.size / 1024 / 1024).toFixed(2)} MB • SQLite Database
+                </div>
+              </div>
+
+              {/* Choice Cards */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => handleExecuteImport(false)}
+                  disabled={isImportingBackup}
+                  className="w-full text-left p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-white dark:bg-slate-900/40 hover:bg-indigo-50/30 dark:hover:bg-indigo-950/20 transition group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 flex items-center gap-2">
+                      <Database className="w-4 h-4 text-indigo-500" />
+                      <span>Option 1: Add to Backup Snapshots Only</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                      Safe & Recommended
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 pl-6">
+                    Validates and copies this file into the backups list. Your current active database remains untouched. You can restore it later anytime.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExecuteImport(true)}
+                  disabled={isImportingBackup}
+                  className="w-full text-left p-4 rounded-2xl border-2 border-rose-200 dark:border-rose-900/60 hover:border-rose-500 dark:hover:border-rose-500 bg-white dark:bg-slate-900/40 hover:bg-rose-50/40 dark:hover:bg-rose-950/20 transition group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-sm text-rose-700 dark:text-rose-400 flex items-center gap-2">
+                      <RotateCcw className="w-4 h-4 text-rose-600" />
+                      <span>Option 2: Import & Restore Immediately</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300">
+                      Overwrites Active Data
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 pl-6">
+                    Replaces current live data with this backup file. An automatic safety snapshot of your current database will be saved first.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setImportModalOpen(false);
+                  setSelectedBackupFile(null);
+                  if (backupFileInputRef.current) backupFileInputRef.current.value = '';
+                }}
+                disabled={isImportingBackup}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TSPL SYNTAX VALIDATION DIAGNOSTIC MODAL ── */}
+      {tsplValidationModal?.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in font-sans">
+          <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 rounded-xl">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">TSPL RAW Command Diagnostics & Inspector</h3>
+                  <p className="text-xs text-slate-400">Syntax validation & command breakdown for TSC TTP-244 Pro</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTsplValidationModal(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto text-xs">
+              {/* Checks grid */}
+              <div className="grid grid-cols-5 gap-2 text-center">
+                {[
+                  { label: 'SIZE mm', ok: tsplValidationModal.validation?.checks?.hasSize },
+                  { label: 'GAP mm', ok: tsplValidationModal.validation?.checks?.hasGap },
+                  { label: 'CLS Buffer', ok: tsplValidationModal.validation?.checks?.hasCls },
+                  { label: 'BARCODE 128', ok: tsplValidationModal.validation?.checks?.hasBarcode128 },
+                  { label: 'PRINT 1,1', ok: tsplValidationModal.validation?.checks?.hasPrint },
+                ].map((chk, idx) => (
+                  <div key={idx} className={`p-2.5 rounded-xl border ${chk.ok ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-600'}`}>
+                    <div className="font-bold text-[11px]">{chk.label}</div>
+                    <div className="text-[10px] font-mono mt-0.5">{chk.ok ? '✓ VALID' : '✗ MISSING'}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Raw TSPL Text Box */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Generated TSPL Payload:</label>
+                <pre className="p-3 bg-slate-900 text-emerald-400 font-mono text-[11px] rounded-2xl overflow-x-auto leading-relaxed border border-slate-800">
+                  {tsplValidationModal.tspl}
+                </pre>
+              </div>
+
+              {/* Command Breakdown */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Parsed Command Sequence ({tsplValidationModal.validation?.commandsCount || 0} lines):</label>
+                <div className="space-y-1.5 font-mono text-[11px]">
+                  {tsplValidationModal.validation?.breakdown?.map((item: any, idx: number) => (
+                    <div key={idx} className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="w-5 text-slate-400 font-bold">{item.line}</span>
+                        <span className="font-bold text-slate-900 dark:text-white">{item.command}</span>
+                        <span className="text-slate-500 font-sans text-[10px]">{item.desc}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{item.raw}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                onClick={() => setTsplValidationModal(null)}
+                className="px-5 py-2 bg-slate-950 dark:bg-white text-white dark:text-slate-950 text-xs font-bold rounded-xl"
+              >
+                Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ESC/POS INSPECTOR DIAGNOSTIC MODAL ── */}
+      {escposInspectModal?.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in font-sans">
+          <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 rounded-xl">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">DTS Receipt ESC/POS Byte Inspector</h3>
+                  <p className="text-xs text-slate-400">Binary buffer analysis ({escposInspectModal.byteLength} total bytes)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEscposInspectModal(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto text-xs">
+              {/* Command Breakdown */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Interpreted Control Commands ({escposInspectModal.commandBreakdown?.length || 0} tokens):
+                </label>
+                <div className="space-y-1.5 font-mono text-[11px] max-h-48 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700/60">
+                  {escposInspectModal.commandBreakdown?.map((cmd: any, idx: number) => (
+                    <div key={idx} className="p-1.5 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-between border border-slate-100 dark:border-slate-700">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-slate-400 text-[10px]">@{cmd.offset}</span>
+                        <span className="font-bold text-indigo-600 dark:text-indigo-400">{cmd.hex}</span>
+                        <span className="text-slate-700 dark:text-slate-300 font-sans text-[11px]">{cmd.desc}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Hex Dump */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Raw ESC/POS Hex Dump:</label>
+                <pre className="p-3 bg-slate-950 text-cyan-400 font-mono text-[10px] rounded-2xl overflow-x-auto leading-tight border border-slate-800 max-h-56 overflow-y-auto">
+                  {escposInspectModal.hexDump}
+                </pre>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                onClick={() => setEscposInspectModal(null)}
+                className="px-5 py-2 bg-slate-950 dark:bg-white text-white dark:text-slate-950 text-xs font-bold rounded-xl"
+              >
+                Close Inspector
+              </button>
+            </div>
           </div>
         </div>
       )}

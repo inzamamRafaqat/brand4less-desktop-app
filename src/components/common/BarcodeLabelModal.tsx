@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Printer,
   X,
@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { getCode128BarWidths, generateCode128Svg } from '../../lib/code128';
 
 export interface BarcodeItem {
   name: string;
@@ -31,32 +32,22 @@ interface BarcodeLabelModalProps {
 }
 
 /**
- * Generates an SVG string representation of Code-128 barcode pattern
+ * Generates an SVG React element representation of standard Code-128 barcode
  */
 const renderBarcodeSvg = (code: string) => {
-  const chars = (code || '000000000000').toUpperCase();
-  const barPattern: number[] = [2, 1, 1, 2, 3, 2]; // Start pattern
-  
-  for (let i = 0; i < chars.length; i++) {
-    const charCode = chars.charCodeAt(i);
-    const w1 = (charCode % 3) + 1;
-    const w2 = ((charCode >> 1) % 2) + 1;
-    const w3 = ((charCode >> 2) % 3) + 1;
-    const w4 = ((charCode >> 3) % 2) + 1;
-    barPattern.push(w1, w2, w3, w4);
-  }
-  barPattern.push(2, 3, 3, 1, 1, 2); // Stop pattern
-
-  const totalUnits = barPattern.reduce((a, b) => a + b, 0);
-  let currentX = 5;
-  const svgWidth = 220;
-  const unitWidth = (svgWidth - 10) / totalUnits;
+  const cleanCode = (code || '000000').toUpperCase();
+  const { widths, totalModules } = getCode128BarWidths(cleanCode);
+  const quietZone = 10;
+  const totalGrid = totalModules + quietZone * 2;
+  const svgWidth = 240;
+  const unitWidth = svgWidth / totalGrid;
   const height = 40;
 
+  let currentX = quietZone * unitWidth;
   const rects: React.ReactNode[] = [];
   let isBar = true;
 
-  barPattern.forEach((w, idx) => {
+  widths.forEach((w, idx) => {
     const barW = w * unitWidth;
     if (isBar) {
       rects.push(
@@ -86,251 +77,187 @@ const renderBarcodeSvg = (code: string) => {
 };
 
 export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ items, onClose }) => {
-  const [printMode, setPrintMode] = useState<'A4_SHEET' | 'THERMAL_ROLL'>('A4_SHEET');
-  const [copiesOption, setCopiesOption] = useState<'ONE_PER_VARIANT' | 'MATCH_STOCK'>('ONE_PER_VARIANT');
-  const [storeHeader, setStoreHeader] = useState('Brand 4 Less');
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [printMode, setPrintMode] = useState<'A4_SHEET' | 'THERMAL_ROLL'>('THERMAL_ROLL');
+  const [copiesOption, setCopiesOption] = useState<'ONE_PER_VARIANT' | 'MATCH_STOCK' | 'CUSTOM'>('CUSTOM');
+  const [storeHeader, setStoreHeader] = useState('Brands 4 Less');
+  const [bulkQty, setBulkQty] = useState<number>(1);
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
+    const initial: Record<string, number> = {};
+    items.forEach((item, idx) => {
+      initial[item.sku || String(idx)] = 1;
+    });
+    return initial;
+  });
+
+  const handleCopiesOptionChange = (option: 'ONE_PER_VARIANT' | 'MATCH_STOCK' | 'CUSTOM') => {
+    setCopiesOption(option);
+    const updated: Record<string, number> = {};
+    items.forEach((item, idx) => {
+      const key = item.sku || String(idx);
+      if (option === 'ONE_PER_VARIANT') {
+        updated[key] = 1;
+      } else if (option === 'MATCH_STOCK') {
+        updated[key] = Math.max(1, item.quantity || 1);
+      } else {
+        updated[key] = bulkQty;
+      }
+    });
+    setQuantities(updated);
+  };
+
+  const updateItemQty = (key: string, delta: number) => {
+    setQuantities((prev) => ({
+      ...prev,
+      [key]: Math.max(1, (prev[key] || 1) + delta),
+    }));
+    setCopiesOption('CUSTOM');
+  };
+
+  const setItemQty = (key: string, qty: number) => {
+    setQuantities((prev) => ({
+      ...prev,
+      [key]: Math.max(1, isNaN(qty) ? 1 : qty),
+    }));
+    setCopiesOption('CUSTOM');
+  };
+
+  const handleBulkQtyChange = (qty: number) => {
+    const validQty = Math.max(1, isNaN(qty) ? 1 : qty);
+    setBulkQty(validQty);
+    const updated: Record<string, number> = {};
+    items.forEach((item, idx) => {
+      updated[item.sku || String(idx)] = validQty;
+    });
+    setQuantities(updated);
+    setCopiesOption('CUSTOM');
+  };
 
   // Compute final printable label list
   const labelsToPrint: BarcodeItem[] = [];
-  items.forEach((item) => {
-    const count = copiesOption === 'MATCH_STOCK' ? Math.max(1, item.quantity || 1) : 1;
+  items.forEach((item, idx) => {
+    const key = item.sku || String(idx);
+    const count = quantities[key] ?? 1;
     for (let i = 0; i < count; i++) {
       labelsToPrint.push(item);
     }
   });
 
-  /**
-   * Generates and downloads a clean, standalone PDF document
-   */
-  const handleDownloadPdf = async () => {
-    if (labelsToPrint.length === 0) return;
-    setIsDownloadingPdf(true);
-    try {
-      const response = await fetch('/api/products/labels/pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('brand4less_token') || ''}`,
-        },
-        body: JSON.stringify({
-          items: labelsToPrint,
-          layout: printMode,
-        }),
-      });
+  const [printers, setPrinters] = useState<any[]>([]);
+  const [selectedPrinter, setSelectedPrinter] = useState<string>('VIRTUAL_TSC_SIMULATOR');
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [printSuccess, setPrintSuccess] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [activeTab, setActiveTab] = useState<'PREVIEW' | 'TSPL' | 'VALIDATE'>('PREVIEW');
+  const [tsplPayload, setTsplPayload] = useState<string>('');
+  const [tsplValidation, setTsplValidation] = useState<any>(null);
+  const [tsplMessage, setTsplMessage] = useState<string>('');
 
-      if (!response.ok) {
-        throw new Error('Server returned ' + response.statusText);
+  useEffect(() => {
+    const loadPrinters = async () => {
+      try {
+        let detected: any[] = [];
+        if (window.electronAPI?.getPrinters) {
+          detected = await window.electronAPI.getPrinters();
+        } else {
+          const res = await api.get('/hardware/printers');
+          detected = res.printers || [];
+        }
+        if (detected.length > 0) {
+          setPrinters(detected);
+          const tsc = detected.find(
+            (p: any) =>
+              p.name.toLowerCase().includes('tsc') ||
+              p.name.toLowerCase().includes('label') ||
+              p.name.toLowerCase().includes('barcode') ||
+              p.name.toLowerCase().includes('xprinter') ||
+              p.name.toLowerCase().includes('te200')
+          );
+          if (tsc) {
+            setSelectedPrinter(tsc.name);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load printers:', err);
       }
+    };
+    loadPrinters();
+  }, []);
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `brand4less_barcode_labels_${printMode.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err: any) {
-      alert('Failed to generate PDF: ' + err.message);
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  };
-
-  const [isSendingTsc, setIsSendingTsc] = useState(false);
-  const [tscSuccess, setTscSuccess] = useState(false);
-
-  const handleDirectTscPrint = async () => {
+  /**
+   * Primary Production Print Handler for TSC TTP-244 Pro:
+   * Dispatches exact binary RAW TSPL string to Win32 spooler via POST /hardware/print-tspl
+   */
+  const handlePrintLabels = async () => {
     if (labelsToPrint.length === 0) return;
-    setIsSendingTsc(true);
+    setIsPrinting(true);
+
     try {
-      await api.post('/hardware/print-tspl', {
+      const res = await api.post('/hardware/print-tspl', {
         items: labelsToPrint,
+        printerName: selectedPrinter || undefined,
         widthMm: 50,
         heightMm: 30,
+        gapMm: 2,
       });
-      setTscSuccess(true);
-      setTimeout(() => setTscSuccess(false), 3000);
+
+      if (res && res.success) {
+        setTsplPayload(res.payload || '');
+        setTsplValidation(res.validation || null);
+        setTsplMessage(res.message || 'RAW job submitted successfully');
+        setPrintSuccess(true);
+        setTimeout(() => setPrintSuccess(false), 3500);
+
+        if (selectedPrinter === 'VIRTUAL_TSC_SIMULATOR') {
+          setActiveTab('TSPL');
+        }
+        setIsPrinting(false);
+        return;
+      }
     } catch (err: any) {
-      alert('TSC Direct Print: ' + (err.message || 'Dispatched via TSPL engine.'));
-    } finally {
-      setIsSendingTsc(false);
+      console.warn('TSPL direct RAW dispatch failed:', err);
+      setTsplMessage(`Printer Warning: ${err.message || 'Dispatch failed'}`);
     }
+
+    setIsPrinting(false);
   };
 
-  /**
-   * Direct, clean print window isolated from main app DOM
-   */
-  const handlePrint = () => {
+  const handleBrowserPrint = () => {
     const printWindow = window.open('', '_blank', 'width=900,height=700');
     if (!printWindow) {
       window.print();
       return;
     }
 
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Brand 4 Less - Barcode Label Sheet</title>
-          <meta charset="utf-8" />
-          <style>
-            @page {
-              size: ${printMode === 'A4_SHEET' ? 'A4 portrait' : '50mm 30mm'};
-              margin: ${printMode === 'A4_SHEET' ? '10mm 8mm' : '0'};
-            }
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-              margin: 0;
-              padding: 0;
-              background: #fff;
-              color: #000;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            ${
-              printMode === 'A4_SHEET'
-                ? `
-              .sheet-grid {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 8px;
-                width: 100%;
-              }
-              .label-card {
-                border: 1px dashed #94a3b8;
-                border-radius: 4px;
-                padding: 6px 8px;
-                box-sizing: border-box;
-                height: 120px;
-                display: flex;
-                flex-col;
-                flex-direction: column;
-                justify-content: space-between;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                text-align: center;
-              }
-            `
-                : `
-              .sheet-grid {
-                display: flex;
-                flex-direction: column;
-              }
-              .label-card {
-                width: 48mm;
-                height: 28mm;
-                border: 1px solid #000;
-                padding: 4px;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                justify-content: space-between;
-                page-break-after: always;
-                break-after: page;
-                text-align: center;
-              }
-            `
-            }
-            .header-row {
-              display: flex;
-              justify-content: space-between;
-              font-size: 8px;
-              font-weight: 900;
-              border-bottom: 1px solid #e2e8f0;
-              padding-bottom: 2px;
-              text-transform: uppercase;
-            }
-            .prod-title {
-              font-size: 9px;
-              font-weight: 800;
-              margin: 2px 0 1px;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-            }
-            .prod-attr {
-              font-size: 8px;
-              color: #475569;
-              margin-bottom: 2px;
-            }
-            .barcode-svg {
-              width: 100%;
-              height: 32px;
-              margin: 0 auto;
-              display: block;
-            }
-            .barcode-text {
-              font-family: monospace;
-              font-size: 8px;
-              font-weight: 700;
-              letter-spacing: 1px;
-              margin-top: 1px;
-            }
-            .price-row {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              font-size: 8px;
-              border-top: 1px solid #e2e8f0;
-              padding-top: 2px;
-            }
-            .price-tag {
-              font-size: 10px;
-              font-weight: 900;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="sheet-grid">
-            ${labelsToPrint
-              .map((item) => {
-                const code = item.barcode || item.sku || '000000';
-                return `
-                  <div class="label-card">
-                    <div class="header-row">
-                      <span>${storeHeader}</span>
-                      <span>${item.categoryName || 'Garment'}</span>
-                    </div>
-                    <div>
-                      <div class="prod-title">${item.name}</div>
-                      <div class="prod-attr">${item.color || ''} ${item.size ? '| Size: ' + item.size : ''}</div>
-                    </div>
-                    <div>
-                      <svg class="barcode-svg" viewBox="0 0 220 35" preserveAspectRatio="none">
-                        ${renderBarcodeSvgString(code)}
-                      </svg>
-                      <div class="barcode-text">*${code}*</div>
-                    </div>
-                    <div class="price-row">
-                      <span style="font-family: monospace;">${item.sku}</span>
-                      <span class="price-tag">PKR ${Number(item.sellingPrice).toLocaleString()}</span>
-                    </div>
-                  </div>
-                `;
-              })
-              .join('')}
-          </div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 500);
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
+    const htmlContent = generateLabelHtml(true);
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
   };
 
+  const handleExportPdf = async () => {
+    if (labelsToPrint.length === 0) return;
+    setIsExportingPdf(true);
+    try {
+      if (window.electronAPI?.exportPdf) {
+        const html = generateLabelHtml(false);
+        await window.electronAPI.exportPdf({
+          htmlContent: html,
+          defaultFilename: `Brand4Less_Labels_${Date.now()}.pdf`,
+          pageSize: printMode === 'A4_SHEET' ? undefined : { width: 50000, height: 30000 },
+        });
+      } else {
+        handleBrowserPrint();
+      }
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto font-sans">
-      <div className="bg-white dark:bg-[#111827] rounded-3xl w-full max-w-4xl p-6 shadow-2xl relative my-auto border border-slate-200/80 dark:border-slate-800 space-y-6 transition-colors">
+      <div className="bg-white dark:bg-[#111827] rounded-3xl w-full max-w-4xl p-6 shadow-2xl relative my-auto border border-slate-200/80 dark:border-slate-800 space-y-5 transition-colors">
         {/* Top Header & Actions */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center space-x-3">
@@ -339,84 +266,109 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ items, onC
             </div>
             <div>
               <h3 className="text-base font-black text-slate-900 dark:text-white">
-                Barcode Sticker Label & PDF Generator
+                TSC Barcode Label Studio & RAW TSPL Engine
               </h3>
               <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">
-                Generate printable sticky labels with scannable vector barcodes, SKUs, and retail prices
+                Win32 RAW Winspool printing for TSC TTP-244 Pro, Virtual Simulator & PDF exporter
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Print Layout Switcher */}
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700">
+            {/* Tab Switching Buttons */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold">
               <button
-                onClick={() => setPrintMode('A4_SHEET')}
+                type="button"
+                onClick={() => setActiveTab('PREVIEW')}
                 className={`px-3 py-1.5 rounded-lg transition ${
-                  printMode === 'A4_SHEET'
-                    ? 'bg-white text-slate-950 dark:bg-slate-900 dark:text-white shadow-sm'
+                  activeTab === 'PREVIEW'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                     : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                A4 Sheet (3x8 Grid)
+                Preview Label
               </button>
               <button
-                onClick={() => setPrintMode('THERMAL_ROLL')}
+                type="button"
+                onClick={() => {
+                  if (!tsplPayload) handlePrintLabels();
+                  setActiveTab('TSPL');
+                }}
                 className={`px-3 py-1.5 rounded-lg transition ${
-                  printMode === 'THERMAL_ROLL'
-                    ? 'bg-white text-slate-950 dark:bg-slate-900 dark:text-white shadow-sm'
+                  activeTab === 'TSPL'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                     : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                Thermal Roll (50x30mm)
+                View TSPL
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!tsplPayload) handlePrintLabels();
+                  setActiveTab('VALIDATE');
+                }}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === 'VALIDATE'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Validate TSPL
               </button>
             </div>
 
-            {/* Copies Mode */}
+            {/* Copies Option Preset */}
             <select
               value={copiesOption}
-              onChange={(e) => setCopiesOption(e.target.value as any)}
+              onChange={(e) => handleCopiesOptionChange(e.target.value as any)}
               className="py-1.5 px-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200"
             >
-              <option value="ONE_PER_VARIANT">1 Sticker per Variant ({items.length} total)</option>
-              <option value="MATCH_STOCK">Match Stock Quantities ({labelsToPrint.length} total)</option>
+              <option value="CUSTOM">Custom Quantity</option>
+              <option value="ONE_PER_VARIANT">1 Sticker per Variant</option>
+              <option value="MATCH_STOCK">Match Current Stock Qty</option>
             </select>
 
-            {/* Download PDF Button */}
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isDownloadingPdf}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs rounded-xl border border-slate-200 dark:border-slate-700 transition flex items-center space-x-1.5 shadow-2xs disabled:opacity-50"
+            {/* Printer Selector Dropdown */}
+            <select
+              value={selectedPrinter}
+              onChange={(e) => setSelectedPrinter(e.target.value)}
+              className="py-1.5 px-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 max-w-[190px] truncate"
+              title="Label Printer Target"
             >
-              {isDownloadingPdf ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              )}
-              <span>{isDownloadingPdf ? 'Saving PDF...' : 'Download PDF'}</span>
+              <option value="VIRTUAL_TSC_SIMULATOR">Virtual TSC Printer (Simulator)</option>
+              {printers.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+
+            {/* Save PDF Button */}
+            <button
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="px-3.5 py-2 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 shadow-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
+              title="Save printable labels to a PDF file on your computer"
+            >
+              {isExportingPdf ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>Save PDF</span>
             </button>
 
-            {/* TSC Direct Hardware Print */}
+            {/* TSPL RAW Print Button */}
             <button
-              onClick={handleDirectTscPrint}
-              disabled={isSendingTsc}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
+              onClick={handlePrintLabels}
+              disabled={isPrinting}
+              className={`px-4 py-2 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 shadow-sm text-white ${
+                printSuccess
+                  ? 'bg-emerald-600'
+                  : 'bg-slate-950 dark:bg-white dark:text-slate-950 hover:bg-slate-850 dark:hover:bg-slate-200'
+              }`}
             >
-              {isSendingTsc ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Printer className="w-3.5 h-3.5" />
-              )}
-              <span>{isSendingTsc ? 'Sending TSPL...' : 'Direct Print (TSC)'}</span>
-            </button>
-
-            {/* Standard Sheet Print Button */}
-            <button
-              onClick={handlePrint}
-              className="px-4 py-2 bg-slate-950 dark:bg-white hover:bg-slate-850 dark:hover:bg-slate-200 text-white dark:text-slate-950 font-bold text-xs rounded-xl transition flex items-center space-x-1.5 shadow-sm"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print Sheet ({labelsToPrint.length})</span>
+              {isPrinting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+              <span>
+                {isPrinting ? 'Dispatching...' : printSuccess ? 'Job Submitted!' : `Print Labels (${labelsToPrint.length})`}
+              </span>
             </button>
 
             <button
@@ -428,89 +380,147 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ items, onC
           </div>
         </div>
 
-        {/* ── PREVIEW STICKER SHEET CONTAINER ──────────────────────────────── */}
-        <div className="max-h-[58vh] overflow-y-auto p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          {printMode === 'A4_SHEET' ? (
-            /* ── A4 STICKER GRID (3 COLUMNS) ────────────────────────────── */
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {labelsToPrint.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="bg-white dark:bg-[#111827] border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-3 flex flex-col items-center justify-between text-center space-y-1"
-                  style={{ minHeight: '145px' }}
-                >
-                  {/* Store Name Header */}
-                  <div className="w-full flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1">
-                    <span className="text-[10px] font-black tracking-wider uppercase text-slate-900 dark:text-white">
-                      {storeHeader}
-                    </span>
-                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 font-mono">
-                      {item.categoryName || 'Garment'}
-                    </span>
-                  </div>
+        {/* Notification Status Banner */}
+        {tsplMessage && (
+          <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-mono font-bold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex justify-between items-center">
+            <span>{tsplMessage}</span>
+            <span className="text-[10px] text-slate-400 font-sans font-semibold">Transport: Win32 RAW Winspool</span>
+          </div>
+        )}
 
-                  {/* Product Title & Attributes */}
-                  <div className="w-full">
-                    <h4 className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1 leading-tight">
-                      {item.name}
-                    </h4>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                      {item.color ? `${item.color} ` : ''}{item.size ? `| Size: ${item.size}` : ''}
-                    </p>
-                  </div>
+        {/* ── MAIN TAB VIEW CONTAINERS ──────────────────────────────────────── */}
+        {activeTab === 'PREVIEW' && (
+          <div className="max-h-[56vh] overflow-y-auto p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {labelsToPrint.map((item, idx) => {
+                return (
+                  <div
+                    key={`${item.sku || 'thermal'}-${idx}`}
+                    className="bg-white dark:bg-[#111827] border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-3 flex flex-col items-center justify-between text-center space-y-1.5 shadow-2xs"
+                    style={{ minHeight: '160px' }}
+                  >
+                    {/* Store Name Header */}
+                    <div className="w-full flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1">
+                      <span className="text-[10px] font-black tracking-wider uppercase text-slate-900 dark:text-white">
+                        {storeHeader}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 font-mono">
+                        {item.categoryName || 'Garment'}
+                      </span>
+                    </div>
 
-                  {/* High-Resolution Scannable Barcode */}
-                  <div className="w-full px-1">
-                    {renderBarcodeSvg(item.barcode || item.sku)}
-                    <span className="font-mono text-[9px] font-bold text-slate-950 dark:text-white tracking-widest block text-center mt-0.5">
-                      *{item.barcode || item.sku}*
-                    </span>
-                  </div>
+                    {/* Product Title & Attributes */}
+                    <div className="w-full">
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1 leading-tight">
+                        {item.name}
+                      </h4>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                        {item.color ? `${item.color} ` : ''}{item.size ? `| Size: ${item.size}` : ''}
+                      </p>
+                    </div>
 
-                  {/* Retail Price & SKU */}
-                  <div className="w-full flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
-                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-[100px]">
-                      {item.sku}
-                    </span>
-                    <span className="text-xs font-black text-slate-950 dark:text-white">
-                      PKR {Number(item.sellingPrice).toLocaleString()}
-                    </span>
+                    {/* High-Resolution Scannable Barcode */}
+                    <div className="w-full px-1">
+                      {renderBarcodeSvg(item.barcode || item.sku)}
+                      <span className="font-mono text-[9px] font-bold text-slate-950 dark:text-white tracking-widest block text-center mt-0.5">
+                        {item.barcode || item.sku}
+                      </span>
+                    </div>
+
+                    {/* Retail Price & SKU */}
+                    <div className="w-full flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
+                      <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-[100px]">
+                        {item.sku}
+                      </span>
+                      <span className="text-xs font-black text-slate-950 dark:text-white">
+                        PKR {Number(item.sellingPrice).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── RAW TSPL INSPECTOR VIEW ───────────────────────────────────────── */}
+        {activeTab === 'TSPL' && (
+          <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-slate-200 font-mono text-xs space-y-3 max-h-[56vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-2 text-[11px] text-slate-400 font-sans font-bold">
+              <span>TSPL 2.0 RAW Command String</span>
+              <span>Byte Length: {Buffer.from(tsplPayload || '', 'utf-8').length} bytes</span>
+            </div>
+            <pre className="p-3 bg-slate-900/80 rounded-xl overflow-x-auto text-emerald-400 text-[11px] leading-relaxed select-all">
+              {tsplPayload || (
+                <span className="text-slate-500 italic">Click "Print Labels" or "View TSPL" to generate native TSPL output.</span>
+              )}
+            </pre>
+          </div>
+        )}
+
+        {/* ── TSPL SYNTAX VALIDATOR VIEW ────────────────────────────────────── */}
+        {activeTab === 'VALIDATE' && (
+          <div className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-4 max-h-[56vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h4 className="font-black text-sm text-slate-900 dark:text-white">TSPL Hardware Command Validator</h4>
+                <p className="text-xs text-slate-500">Validates required TSPL syntax before hardware dispatch</p>
+              </div>
+              <span
+                className={`px-3 py-1 rounded-xl text-xs font-black ${
+                  tsplValidation?.isValid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {tsplValidation?.isValid ? 'SYNTAX VALID' : 'SYNTAX CHECK'}
+              </span>
+            </div>
+
+            {tsplValidation?.checks ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">SIZE Command</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.hasSize ? '✓ SIZE 50 mm,30 mm' : '✗ Missing'}
                   </div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            /* ── THERMAL STICKER ROLL (50mm x 30mm SINGLE STICKER) ────────── */
-            <div className="flex flex-col items-center space-y-4">
-              {labelsToPrint.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="bg-white dark:bg-[#111827] border-2 border-slate-900 dark:border-slate-700 rounded-lg p-2.5 w-64 flex flex-col items-center justify-between text-center space-y-1"
-                >
-                  <div className="w-full flex justify-between items-center text-[9px] font-black uppercase text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-0.5">
-                    <span>{storeHeader}</span>
-                    <span>PKR {Number(item.sellingPrice).toLocaleString()}</span>
-                  </div>
-
-                  <h5 className="font-bold text-[10px] text-slate-900 dark:text-white truncate leading-tight w-full">
-                    {item.name}
-                  </h5>
-
-                  <p className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">
-                    {item.color ? `${item.color}` : ''} {item.size ? `(${item.size})` : ''}
-                  </p>
-
-                  <div className="w-full px-1">
-                    {renderBarcodeSvg(item.barcode || item.sku)}
-                    <span className="font-mono text-[8px] font-bold text-slate-900 dark:text-white tracking-wider block">
-                      {item.barcode || item.sku}
-                    </span>
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">GAP Command</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.hasGap ? '✓ GAP 2 mm,0' : '✗ Missing'}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">CLS Command</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.hasCls ? '✓ Buffer Cleared' : '✗ Missing'}
+                  </div>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">Barcode Type</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.isBarcode128 ? '✓ Code 128 ("128")' : '✗ Invalid Type'}
+                  </div>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">Barcode Content</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.hasBarcodeData ? '✓ Present' : '✗ Empty'}
+                  </div>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400">PRINT Command</div>
+                  <div className="font-mono text-xs font-black text-emerald-600 mt-1">
+                    {tsplValidation.checks.hasPrint ? '✓ PRINT 1,1' : '✗ Missing'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-xs text-slate-400 italic">
+                Click "View TSPL" or "Print Labels" to run automatic TSPL syntax validation.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer Note */}
         <div className="flex justify-between items-center text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -526,22 +536,18 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ items, onC
  * Helper to render SVG bars in raw HTML for popup print window
  */
 function renderBarcodeSvgString(code: string): string {
-  const chars = (code || '000000000000').toUpperCase();
-  const barPattern: number[] = [2, 1, 1, 2, 3, 2];
-  for (let i = 0; i < chars.length; i++) {
-    const charCode = chars.charCodeAt(i);
-    barPattern.push((charCode % 3) + 1, ((charCode >> 1) % 2) + 1, ((charCode >> 2) % 3) + 1, ((charCode >> 3) % 2) + 1);
-  }
-  barPattern.push(2, 3, 3, 1, 1, 2);
+  const cleanCode = (code || '000000').toUpperCase();
+  const { widths, totalModules } = getCode128BarWidths(cleanCode);
+  const quietZone = 10;
+  const totalGrid = totalModules + quietZone * 2;
+  const svgWidth = 240;
+  const unitWidth = svgWidth / totalGrid;
 
-  const totalUnits = barPattern.reduce((a, b) => a + b, 0);
-  let currentX = 5;
-  const svgWidth = 220;
-  const unitWidth = (svgWidth - 10) / totalUnits;
+  let currentX = quietZone * unitWidth;
   let rects = '';
   let isBar = true;
 
-  barPattern.forEach((w) => {
+  widths.forEach((w) => {
     const barW = w * unitWidth;
     if (isBar) {
       rects += `<rect x="${currentX.toFixed(1)}" y="0" width="${Math.max(1, barW).toFixed(1)}" height="35" fill="#000000" />`;

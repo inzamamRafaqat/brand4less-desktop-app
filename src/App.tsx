@@ -39,10 +39,12 @@ export const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      if (user?.role === 'STAFF') {
-        setActiveTab('pos');
+      if (user?.role === 'STAFF' || user?.role === 'CASHIER') {
+        if (!['pos', 'sales', 'customers'].includes(activeTab)) {
+          setActiveTab('pos');
+        }
       } else if (user?.role === 'ADMIN' || user?.role === 'MANAGER') {
-        setActiveTab('dashboard');
+        if (!activeTab) setActiveTab('dashboard');
       }
 
       const fetchLowStock = async () => {
@@ -57,13 +59,25 @@ export const AppContent: React.FC = () => {
     }
   }, [isAuthenticated, user?.role]);
 
+  // Global F1 keybinding to open POS terminal instantly from anywhere
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setActiveTab('pos');
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="h-screen w-screen bg-[#F8FAFC] dark:bg-[#090D16] flex items-center justify-center text-slate-900 dark:text-slate-100">
         <div className="text-center space-y-3">
           <RefreshCw className="w-10 h-10 text-slate-900 dark:text-white animate-spin mx-auto" />
           <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-            Initializing Brand 4 Less Desktop Suite...
+            Initializing Brands 4 Less Desktop Suite...
           </p>
         </div>
       </div>
@@ -132,18 +146,24 @@ export const AppContent: React.FC = () => {
 
         {/* Full-Screen Edge-to-Edge Page Canvas */}
         <main className="flex-1 flex overflow-hidden bg-[#F8FAFC] dark:bg-[#090D16] relative">
-          {activeTab === 'pos' && <PosTerminalPage />}
-          {activeTab === 'dashboard' && <DashboardPage setActiveTab={setActiveTab} />}
-          {activeTab === 'sales' && <SalesPage />}
-          {activeTab === 'customers' && <CustomersPage onNavigateToKhata={() => setActiveTab('khata')} />}
-          {activeTab === 'inventory' && <InventoryPage />}
-          {activeTab === 'purchases' && <PurchasesPage />}
-          {activeTab === 'suppliers' && <SuppliersPage />}
-          {activeTab === 'import' && <BulkImportPage setActiveTab={setActiveTab} />}
-          {activeTab === 'khata' && <KhataLedgerPage />}
-          {activeTab === 'expenses' && <ExpensesPage />}
-          {activeTab === 'reports' && <ReportsPage />}
-          {activeTab === 'settings' && <SettingsPage />}
+          {(user?.role === 'STAFF' || user?.role === 'CASHIER') && !['pos', 'sales', 'customers'].includes(activeTab) ? (
+            <PosTerminalPage />
+          ) : (
+            <>
+              {activeTab === 'pos' && <PosTerminalPage />}
+              {activeTab === 'dashboard' && <DashboardPage setActiveTab={setActiveTab} />}
+              {activeTab === 'sales' && <SalesPage />}
+              {activeTab === 'customers' && <CustomersPage onNavigateToKhata={() => setActiveTab('khata')} />}
+              {activeTab === 'inventory' && <InventoryPage />}
+              {activeTab === 'purchases' && <PurchasesPage />}
+              {activeTab === 'suppliers' && <SuppliersPage />}
+              {activeTab === 'import' && <BulkImportPage setActiveTab={setActiveTab} />}
+              {activeTab === 'khata' && <KhataLedgerPage />}
+              {activeTab === 'expenses' && <ExpensesPage />}
+              {activeTab === 'reports' && <ReportsPage />}
+              {activeTab === 'settings' && <SettingsPage />}
+            </>
+          )}
         </main>
       </div>
     </div>

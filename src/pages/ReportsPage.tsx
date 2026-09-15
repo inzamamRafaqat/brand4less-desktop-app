@@ -58,10 +58,12 @@ export const ReportsPage: React.FC = () => {
   const [startDate, setStartDate] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
   const [loading, setLoading] = useState(true);
+  const [reportDisplayLimit, setReportDisplayLimit] = useState(50);
   const { isDark } = useTheme();
 
   const fetchReports = async () => {
     setLoading(true);
+    setReportDisplayLimit(50);
     try {
       if (reportType === 'PNL') {
         const res = await api.get(`/reports/profit-loss?startDate=${startDate}&endDate=${endDate}`);
@@ -74,7 +76,7 @@ export const ReportsPage: React.FC = () => {
           setValuationData(res.valuation || res);
         }
       } else if (reportType === 'DAILY_SALES') {
-        const res = await api.get(`/reports/sales?startDate=${startDate}&endDate=${endDate}&limit=100`);
+        const res = await api.get(`/reports/sales?startDate=${startDate}&endDate=${endDate}&limit=10000`);
         if (res.sales) {
           setDailySalesData(res);
         }
@@ -165,8 +167,9 @@ export const ReportsPage: React.FC = () => {
 
   // Daily Sales Chart Setup
   const salesItems: any[] = dailySalesData?.sales || [];
-  const totalPeriodSales = salesItems.reduce((sum, s) => sum + Number(s.net_total || 0), 0);
-  const totalPeriodProfit = salesItems.reduce((sum, s) => sum + Number(s.total_profit || 0), 0);
+  const salesSummary = dailySalesData?.summary || {};
+  const totalPeriodSales = Number(salesSummary.total_revenue || 0) || salesItems.reduce((sum, s) => sum + Number(s.net_total || 0), 0);
+  const totalPeriodProfit = Number(salesSummary.total_profit || 0) || salesItems.reduce((sum, s) => sum + Number(s.total_profit || 0), 0);
 
   return (
     <div className="flex-1 bg-[#F8FAFC] dark:bg-[#090D16] p-8 overflow-y-auto space-y-6 font-sans transition-colors">
@@ -489,9 +492,17 @@ export const ReportsPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="overflow-x-auto">
+            <div 
+              className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]"
+              onScroll={(e) => {
+                const target = e.target as HTMLDivElement;
+                if (target.scrollHeight - target.scrollTop <= target.clientHeight + 50 && reportDisplayLimit < valItems.length) {
+                  setReportDisplayLimit(prev => prev + 50);
+                }
+              }}
+            >
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                   <tr>
                     <th className="p-4">SKU / Barcode</th>
                     <th className="p-4">Product Name</th>
@@ -512,7 +523,7 @@ export const ReportsPage: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    valItems.map((item: any) => (
+                    valItems.slice(0, reportDisplayLimit).map((item: any) => (
                       <tr key={item.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition">
                         <td className="p-4 font-mono font-bold text-slate-900 dark:text-white">
                           {item.sku}
@@ -600,9 +611,17 @@ export const ReportsPage: React.FC = () => {
               Sales Transaction Log ({salesItems.length})
             </div>
 
-            <div className="overflow-x-auto">
+            <div 
+              className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]"
+              onScroll={(e) => {
+                const target = e.target as HTMLDivElement;
+                if (target.scrollHeight - target.scrollTop <= target.clientHeight + 50 && reportDisplayLimit < salesItems.length) {
+                  setReportDisplayLimit(prev => prev + 50);
+                }
+              }}
+            >
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
                   <tr>
                     <th className="p-4">Invoice #</th>
                     <th className="p-4">Date & Time</th>
@@ -622,7 +641,7 @@ export const ReportsPage: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    salesItems.map((s) => (
+                    salesItems.slice(0, reportDisplayLimit).map((s) => (
                       <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition">
                         <td className="p-4 font-mono font-bold text-slate-900 dark:text-white">
                           {s.invoice_number}

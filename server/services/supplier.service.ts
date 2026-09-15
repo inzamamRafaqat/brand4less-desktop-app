@@ -410,7 +410,9 @@ export class SupplierService {
     amount: number,
     paymentMethod: 'CASH' | 'BANK_TRANSFER' | 'CARD',
     notes: string,
-    userId: string
+    userId: string,
+    purchaseId?: string,
+    purchaseInvoiceNo?: string
   ): any {
     return runTransaction((db) => {
       if (amount <= 0) throw new Error('Payment amount must be greater than 0');
@@ -420,8 +422,7 @@ export class SupplierService {
 
       const previousPayable = Number(supplier.current_payable.toFixed(2));
 
-      // Never let a payment drive the payable negative — an untracked "advance"
-      // would vanish from the payables KPI (which filters current_payable > 0).
+      // Never let a payment drive the payable negative
       if (amount > previousPayable + 0.01) {
         throw new Error(
           `Payment (${amount}) exceeds the outstanding payable (${previousPayable}) for ${supplier.name}. ` +
@@ -432,11 +433,11 @@ export class SupplierService {
       const newPayable = Number((previousPayable - amount).toFixed(2));
       const receiptNo = `SUP-PAY-${Date.now().toString().slice(-6)}`;
 
-      // Update supplier balance
+      // 1. Update supplier balance
       db.prepare('UPDATE suppliers SET current_payable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
         .run(newPayable, supplierId);
 
-      // Record in ledger
+      // 2. Record in supplier ledger
       db.prepare(`
         INSERT INTO supplier_ledger (
           id, supplier_id, entry_type, reference_id, debit, credit, running_payable, payment_method, notes, user_id
@@ -452,6 +453,69 @@ export class SupplierService {
         userId
       );
 
+      // 3. Synchronize with purchases table (Itemized purchase invoice allocation)
+      let targetPurchase: any = null;
+      if (purchaseId || purchaseInvoiceNo) {
+        targetPurchase = db.prepare(`
+          SELECT * FROM purchases 
+          WHERE (id = ? OR purchase_invoice_no = ?) AND supplier_id = ?
+        `).get(purchaseId || '', purchaseInvoiceNo || '', supplierId);
+      }
+
+      // Check if notes contains invoice reference e.g. #Pur567 or #PUR-1234
+      if (!targetPurchase && notes) {
+        const invMatch = notes.match(/#([A-Za-z0-9_-]+)/);
+        if (invMatch && invMatch[1]) {
+          targetPurchase = db.prepare(`
+            SELECT * FROM purchases 
+            WHERE purchase_invoice_no = ? AND supplier_id = ?
+          `).get(invMatch[1], supplierId);
+        }
+      }
+
+      if (targetPurchase) {
+        // Direct allocation to targeted purchase bill
+        const curPaid = Number(targetPurchase.paid_amount || 0);
+        const totalAmt = Number(targetPurchase.total_amount || 0);
+        const newPaid = Number((curPaid + amount).toFixed(2));
+        const newBalance = Math.max(0, Number((totalAmt - newPaid).toFixed(2)));
+        const newStatus = newBalance <= 0 ? 'PAID' : 'PARTIAL';
+
+        db.prepare(`
+          UPDATE purchases 
+          SET paid_amount = ?, balance_due = ?, payment_status = ?
+          WHERE id = ?
+        `).run(newPaid, newBalance, newStatus, targetPurchase.id);
+      } else {
+        // FIFO auto-allocation across supplier's unpaid / partially paid purchase bills
+        let remainingToAllocate = amount;
+        const unpaidPurchases = db.prepare(`
+          SELECT * FROM purchases 
+          WHERE supplier_id = ? AND balance_due > 0 
+          ORDER BY purchase_date ASC, created_at ASC
+        `).all(supplierId) as any[];
+
+        for (const p of unpaidPurchases) {
+          if (remainingToAllocate <= 0) break;
+          const pDue = Number(p.balance_due || 0);
+          const pPaid = Number(p.paid_amount || 0);
+          const pTotal = Number(p.total_amount || 0);
+
+          const payTowardThis = Math.min(pDue, remainingToAllocate);
+          const updatedPaid = Number((pPaid + payTowardThis).toFixed(2));
+          const updatedDue = Math.max(0, Number((pTotal - updatedPaid).toFixed(2)));
+          const updatedStatus = updatedDue <= 0 ? 'PAID' : 'PARTIAL';
+
+          db.prepare(`
+            UPDATE purchases 
+            SET paid_amount = ?, balance_due = ?, payment_status = ?
+            WHERE id = ?
+          `).run(updatedPaid, updatedDue, updatedStatus, p.id);
+
+          remainingToAllocate = Number((remainingToAllocate - payTowardThis).toFixed(2));
+        }
+      }
+
       AuditService.log({
         userId,
         action: 'RECORD_SUPPLIER_PAYMENT',
@@ -463,6 +527,8 @@ export class SupplierService {
           paymentMethod,
           previousPayable,
           newPayable,
+          targetPurchaseId: targetPurchase?.id,
+          targetPurchaseInvoiceNo: targetPurchase?.purchase_invoice_no,
         },
       });
 
@@ -474,6 +540,7 @@ export class SupplierService {
         previousPayable,
         newPayable,
         notes,
+        targetPurchaseId: targetPurchase?.id,
       };
     });
   }

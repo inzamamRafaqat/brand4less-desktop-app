@@ -72,9 +72,9 @@ export class AuthService {
   }
 
   /**
-   * Forced or voluntary password change
+   * Forced or voluntary password and PIN change
    */
-  static changePassword(userId: string, currentPassword: string, newPassword: string): { success: boolean; message: string } {
+  static changePassword(userId: string, currentPassword: string, newPassword: string, newPin?: string): { success: boolean; message: string } {
     const db = getDb();
     const user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(userId) as any;
     if (!user) {
@@ -95,23 +95,40 @@ export class AuthService {
     }
 
     const newHash = bcrypt.hashSync(cleanNew, 10);
-    db.prepare(`
-      UPDATE users
-      SET password_hash = ?,
-          must_change_password = 0,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(newHash, userId);
+    const cleanPin = (newPin || '').trim();
+
+    if (cleanPin) {
+      if (!/^\d{4,8}$/.test(cleanPin)) {
+        throw new Error('Quick PIN must be 4 to 8 numeric digits.');
+      }
+      const newPinHash = bcrypt.hashSync(cleanPin, 10);
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?,
+            pin_code = ?,
+            must_change_password = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(newHash, newPinHash, userId);
+    } else {
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?,
+            must_change_password = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(newHash, userId);
+    }
 
     AuditService.log({
       userId,
       action: 'CHANGE_PASSWORD',
       entityType: 'USER',
       entityId: userId,
-      newValue: { username: user.username, forcedPasswordResolved: true },
+      newValue: { username: user.username, forcedPasswordResolved: true, pinUpdated: Boolean(cleanPin) },
     });
 
-    return { success: true, message: 'Password updated successfully.' };
+    return { success: true, message: cleanPin ? 'Password and Quick PIN updated successfully.' : 'Password updated successfully.' };
   }
 
   /**

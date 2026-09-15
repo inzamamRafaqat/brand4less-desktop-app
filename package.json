@@ -21,7 +21,7 @@
   "keywords": [],
   "author": "Brand4Less",
   "license": "ISC",
-  "description": "Brand 4 Less Retail Management & POS Suite",
+  "description": "Brands 4 Less Retail Management & POS Suite",
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.8.1",
@@ -76,7 +76,7 @@
   },
   "build": {
     "appId": "com.brand4less.pos",
-    "productName": "Brand 4 Less POS",
+    "productName": "Brands 4 Less POS",
     "asar": false,
     "npmRebuild": false,
     "directories": {
@@ -92,6 +92,10 @@
       {
         "from": "extra/bin/node.exe",
         "to": "bin/node.exe"
+      },
+      {
+        "from": "extra/bin/raw-print.exe",
+        "to": "bin/raw-print.exe"
       }
     ],
     "win": {
@@ -111,7 +115,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Brand 4 Less POS"
+      "shortcutName": "Brands 4 Less POS"
     }
   }
 }

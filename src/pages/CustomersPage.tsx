@@ -53,23 +53,66 @@ export const CustomersPage: React.FC<{ onNavigateToKhata?: (customerId: string) 
     creditLimit: 50000,
   });
 
-  const fetchCustomers = async () => {
-    setLoading(true);
+  const searchAbortRef = React.useRef<AbortController | null>(null);
+  const searchSeqRef = React.useRef<number>(0);
+
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const fetchCustomers = async (query = searchQuery, resetPage = false) => {
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    searchAbortRef.current = abortController;
+    const seq = ++searchSeqRef.current;
+
+    if (resetPage) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+    
     try {
-      const res = await api.get(`/customers?query=${encodeURIComponent(searchQuery)}&limit=100`);
+      const targetPage = resetPage ? 1 : page;
+      const res = await api.get(`/customers?query=${encodeURIComponent(query)}&page=${targetPage}&limit=50`, {
+        signal: abortController.signal,
+      });
+      if (seq !== searchSeqRef.current) return;
+
       if (res.customers) {
-        setCustomers(res.customers);
+        if (resetPage) {
+          setCustomers(res.customers);
+        } else {
+          setCustomers((prev) => [...prev, ...res.customers]);
+        }
         setTotalCount(res.total || res.customers.length);
+        setHasMore(res.customers.length === 50);
+        setPage(targetPage + 1);
       }
-    } catch (err) {
-      console.error('Failed to fetch customers:', err);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError' && seq === searchSeqRef.current) {
+        console.error('Failed to fetch customers:', err);
+      }
     } finally {
-      setLoading(false);
+      if (seq === searchSeqRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchCustomers();
+    const timer = setTimeout(() => {
+      fetchCustomers(searchQuery, true);
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort();
+      }
+    };
   }, [searchQuery]);
 
   const handleOpenPurchaseHistory = async (cust: any) => {
@@ -221,9 +264,17 @@ export const CustomersPage: React.FC<{ onNavigateToKhata?: (customerId: string) 
           <span className="text-xs text-slate-400 font-medium">Click "Purchase History" to inspect past invoices & reprint receipts</span>
         </div>
 
-        <div className="overflow-x-auto">
+        <div 
+          className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)] min-h-[400px]"
+          onScroll={(e) => {
+            const target = e.target as HTMLDivElement;
+            if (target.scrollHeight - target.scrollTop <= target.clientHeight + 50 && hasMore && !loadingMore && !loading) {
+              fetchCustomers(searchQuery, false);
+            }
+          }}
+        >
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50/80 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 font-bold uppercase tracking-wider sticky top-0 z-10 shadow-xs">
               <tr>
                 <th className="p-4">Customer Name</th>
                 <th className="p-4">Phone Number</th>
@@ -318,6 +369,9 @@ export const CustomersPage: React.FC<{ onNavigateToKhata?: (customerId: string) 
               )}
             </tbody>
           </table>
+          {loadingMore && (
+            <div className="text-center py-4 text-xs text-slate-500 font-bold">Loading more customers...</div>
+          )}
         </div>
       </div>
 

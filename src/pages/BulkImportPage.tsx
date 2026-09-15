@@ -388,6 +388,7 @@ export const BulkImportPage: React.FC<BulkImportPageProps> = ({ setActiveTab }) 
                   <th className="p-3">Selling Price</th>
                   <th className="p-3">Qty</th>
                   <th className="p-3">Generated SKU / Barcode</th>
+                  <th className="p-3">Details / Errors</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -413,6 +414,13 @@ export const BulkImportPage: React.FC<BulkImportPageProps> = ({ setActiveTab }) 
                     <td className="p-3 font-bold text-slate-900 dark:text-white">{row.mapped.quantity}</td>
                     <td className="p-3 font-mono text-[10px] text-emerald-700 dark:text-emerald-400">
                       {row.mapped.sku || 'Auto-generated on import'}
+                    </td>
+                    <td className="p-3 text-[11px]">
+                      {row.isValid ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Ready to import</span>
+                      ) : (
+                        <span className="text-rose-600 dark:text-rose-400 font-medium">{row.errors?.join(', ')}</span>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -77,8 +77,8 @@ export class ReportService {
     const lowStockCount = db.prepare('SELECT COUNT(*) as count FROM product_variants WHERE stock_quantity <= min_stock_level AND is_active = 1').get() as { count: number };
     const totalInventoryValue = db.prepare('SELECT COALESCE(SUM(stock_quantity * cost_price), 0) as cost_val, COALESCE(SUM(stock_quantity * selling_price), 0) as retail_val FROM product_variants WHERE is_active = 1').get() as any;
 
-    // 4. Last 7 Days Daily Sales Trend (store-local days)
-    const last7Days = db.prepare(`
+    // 4. Last 7 Days Daily Sales Trend (store-local days, guarantees all 7 calendar days)
+    const last7DaysRaw = db.prepare(`
       SELECT
         substr(${sqlLocal('created_at')}, 1, 10) as sale_date,
         COALESCE(SUM(net_total), 0) as daily_sales,
@@ -88,7 +88,40 @@ export class ReportService {
       WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
       GROUP BY substr(${sqlLocal('created_at')}, 1, 10)
       ORDER BY sale_date ASC
-    `).all(`${localDaysAgoStr(6)} 00:00:00`);
+    `).all(`${localDaysAgoStr(6)} 00:00:00`) as any[];
+
+    const last7DaysMap = new Map<string, any>();
+    for (const r of last7DaysRaw) {
+      last7DaysMap.set(r.sale_date, r);
+    }
+    const fullLast7Days: any[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const dStr = localDaysAgoStr(i);
+      const existing = last7DaysMap.get(dStr);
+      if (existing) {
+        fullLast7Days.push(existing);
+      } else {
+        fullLast7Days.push({
+          sale_date: dStr,
+          daily_sales: 0,
+          daily_profit: 0,
+          transactions: 0,
+        });
+      }
+    }
+
+    const weekSales = db.prepare(`
+      SELECT
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as gross_profit,
+        COUNT(id) as transaction_count
+      FROM sales
+      WHERE ${sqlLocal('created_at')} >= ? AND status != 'CANCELLED'
+    `).get(`${localDaysAgoStr(6)} 00:00:00`) as any;
+
+    const weekReversal = reversalSince(`${localDaysAgoStr(6)} 00:00:00`);
+    const weekReturnsProfit = Number((weekReversal.rev - weekReversal.cogs).toFixed(2));
+    const weekNetProfit = Number((weekSales.gross_profit - weekReturnsProfit).toFixed(2));
 
     // 5. Top 5 Best Selling Products
     const topProducts = db.prepare(`
@@ -178,11 +211,31 @@ export class ReportService {
       LIMIT 5
     `).all() as any[];
 
+    // Year-to-date calculation
+    const yearSales = db.prepare(`
+      SELECT
+        COALESCE(SUM(net_total), 0) as total_sales,
+        COALESCE(SUM(total_profit), 0) as gross_profit,
+        COUNT(id) as transaction_count
+      FROM sales
+      WHERE strftime('%Y', ${sqlLocal('created_at')}) = ? AND status != 'CANCELLED'
+    `).get(currentYear) as any;
+
+    const yearReversal = reversalSince(`${currentYear}-01-01 00:00:00`);
+    const yearReturnsProfit = Number((yearReversal.rev - yearReversal.cogs).toFixed(2));
+    const yearNetProfit = Number((yearSales.gross_profit - yearReturnsProfit).toFixed(2));
+
     return {
       today: {
         sales: Number((todaySales.total_sales - todayReversal.rev).toFixed(2)),
         grossProfit: Number((todaySales.gross_profit - todayReturnsProfit).toFixed(2)),
         transactions: todaySales.transaction_count,
+      },
+      thisWeek: {
+        sales: Number((weekSales.total_sales - weekReversal.rev).toFixed(2)),
+        grossProfit: weekNetProfit,
+        netProfit: weekNetProfit,
+        transactions: weekSales.transaction_count,
       },
       thisMonth: {
         sales: Number((monthSales.total_sales - monthReversal.rev).toFixed(2)),
@@ -192,6 +245,12 @@ export class ReportService {
         netProfit: monthNetProfit.netOperatingProfit,
         transactions: monthSales.transaction_count,
       },
+      thisYear: {
+        sales: Number((yearSales.total_sales - yearReversal.rev).toFixed(2)),
+        grossProfit: yearNetProfit,
+        netProfit: yearNetProfit,
+        transactions: yearSales.transaction_count,
+      },
       operational: {
         customerReceivables: receivables.total,
         supplierPayables: payables.total,
@@ -200,8 +259,8 @@ export class ReportService {
         inventoryCostValue: totalInventoryValue.cost_val,
         inventoryRetailValue: totalInventoryValue.retail_val,
       },
-      salesTrend: last7Days,
-      weeklySalesTrend: last7Days,
+      salesTrend: fullLast7Days,
+      weeklySalesTrend: fullLast7Days,
       monthlySalesTrend,
       yearlySalesTrend,
       categoryMix,
